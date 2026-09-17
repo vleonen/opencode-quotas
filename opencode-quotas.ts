@@ -246,39 +246,26 @@ export function inPeakAt(pv: ProviderDef, date: Date): boolean {
 
 export type Boundary = { at: number; toPeak: boolean }
 
-/** Peak segments (minutes-of-day, provider tz) covering "today", plus the current minute. */
-export type DaySegments = { segments: Array<[number, number]>; nowMin: number; nowLabel: string }
-
-/** Today's peak segments in the provider tz — windows clipped to [0,1440), midnight wraps split. */
-export function daySegments(pv: ProviderDef, now: number = Date.now()): DaySegments {
-  const p = zonedParts(new Date(now), pv.tz)
-  const segments: Array<[number, number]> = []
-  for (const w of pv.peakWindows) {
-    const s = toMin(w.start)
-    const e = toMin(w.end)
-    if (e > s) {
-      if (w.days.includes(p.weekday)) segments.push([s, e])
-    } else {
-      if (w.days.includes(p.weekday)) segments.push([s, 1440])
-      const prevDay = (p.weekday + 6) % 7
-      if (w.days.includes(prevDay) && e > 0) segments.push([0, e])
-    }
-  }
-  segments.sort((a, b) => a[0] - b[0])
-  return { segments, nowMin: p.minutes, nowLabel: fmtClock(now, pv.tz) }
+/** UTC epoch of the server-local midnight containing `now` (the TUI viewer's machine). */
+export function localMidnightUTC(now: number = Date.now()): number {
+  const d = new Date(now)
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
 }
 
-/** 24-char midnight-aligned sparkline for the provider tz: ▓ peak hour, ░ off-peak, ▮/▯ = now. */
+/** 24-slot sparkline over the server-local day — provider peak windows repositioned into it: ▓ peak hour, ░ off-peak, ▮/▯ = now. */
 export function sparkline24(pv: ProviderDef, now: number = Date.now()): string {
-  const { segments, nowMin } = daySegments(pv, now)
+  if (!pv.peakWindows.length) {
+    const empty = new Array(24).fill("░")
+    empty[Math.min(23, Math.floor((now - localMidnightUTC(now)) / 3_600_000))] = "▯"
+    return empty.join("")
+  }
+  const midnight = localMidnightUTC(now)
   const cells: string[] = []
   for (let h = 0; h < 24; h++) {
-    const mid = h * 60 + 30
-    cells.push(segments.some(([s, e]) => mid >= s && mid < e) ? "▓" : "░")
+    cells.push(inPeakAt(pv, new Date(midnight + h * 3_600_000 + 1_800_000)) ? "▓" : "░")
   }
-  const nowIdx = Math.min(23, Math.floor(nowMin / 60))
-  const inPeak = segments.some(([s, e]) => nowMin >= s && nowMin < e)
-  cells[nowIdx] = inPeak ? "▮" : "▯"
+  const nowIdx = Math.min(23, Math.floor((now - midnight) / 3_600_000))
+  cells[nowIdx] = inPeakAt(pv, new Date(now)) ? "▮" : "▯"
   return cells.join("")
 }
 
@@ -461,14 +448,19 @@ export function toastStatus(providers: ProviderDef[], now: number = Date.now()):
 }
 
 /** Plain-text table for the companion server (/opencode-quotas.txt) and the /quotas command. */
-export function textTable(providers: ProviderDef[], now: number = Date.now(), usage: UsageSnapshot[] = []): string {
+export function textTable(
+  providers: ProviderDef[],
+  now: number = Date.now(),
+  usage: UsageSnapshot[] = [],
+  usagePending = false,
+): string {
   const head = `Model provider peak-hours — ${fmtClock(now)} local · ${fmtClock(now, "UTC")} UTC`
   if (!providers.length) return `${head}\n${"".padEnd(head.length, "-")}\n${EMPTY_PROVIDERS_HINT}\n`
   const es = enrich(providers, now)
   const rows = es.map((e) => {
     const win = e.windows.length ? e.windows.join(" & ") : "no fixed peak hours published"
     const next = e.untilLabel ?? "-"
-    return `${e.pv.name}  [${nowTag(e)}]\n  window : ${win}\n  24h    : ${sparkline24(e.pv)} (midnight-aligned, ${e.pv.tz})\n  next   : ${next}\n  benefit: ${e.pv.benefit}\n  source : ${e.pv.source} (verified ${e.pv.checked})`
+    return `${e.pv.name}  [${nowTag(e)}]\n  window : ${win}\n  24h    : ${sparkline24(e.pv)} (local day)\n  next   : ${next}\n  benefit: ${e.pv.benefit}\n  source : ${e.pv.source} (verified ${e.pv.checked})`
   })
   const parts = [head, "".padEnd(head.length, "-"), ...rows]
   if (usage.length) {
@@ -476,6 +468,8 @@ export function textTable(providers: ProviderDef[], now: number = Date.now(), us
     if (lines.length) {
       parts.push("", "Quota & balance (live from provider account APIs)", "".padEnd(44, "-"), ...lines.map((l) => `  ${l}`))
     }
+  } else if (usagePending) {
+    parts.push("", "quota & balance: loading — first poll in progress…")
   } else {
     parts.push("", "quota & balance: no API keys found (not configured) — run 'opencode auth login <provider>' or set OPENCODE_QUOTAS_<PROVIDER>_API_KEY (see README)")
   }
@@ -484,10 +478,16 @@ export function textTable(providers: ProviderDef[], now: number = Date.now(), us
 }
 
 /** Markdown status card posted into new sessions; renders in TUI and web UI. */
-export function markdownCard(providers: ProviderDef[], now: number = Date.now(), usage: UsageSnapshot[] = []): string {
+export function markdownCard(
+  providers: ProviderDef[],
+  now: number = Date.now(),
+  usage: UsageSnapshot[] = [],
+  usagePending = false,
+): string {
   const head = `**Provider peak-hours** — ${fmtClock(now)} local · ${fmtClock(now, "UTC")} UTC`
   const usageMd = usageMarkdown(usage, now)
-  if (!providers.length) return [head, "", `_${EMPTY_PROVIDERS_HINT}_`, "", ...(usageMd ? [usageMd, ""] : [])].join("\n")
+  const pendingMd = !usageMd && usagePending ? "_Quota & balance: loading — first poll in progress…_" : null
+  if (!providers.length) return [head, "", `_${EMPTY_PROVIDERS_HINT}_`, "", ...(usageMd ? [usageMd, ""] : pendingMd ? [pendingMd, ""] : [])].join("\n")
   const es = enrich(providers, now)
   const rows = es.map((e) => {
     const name = `**${e.pv.name}**`
@@ -504,7 +504,7 @@ export function markdownCard(providers: ProviderDef[], now: number = Date.now(),
     "|---|---|---|---|---|",
     ...rows,
     "",
-    ...(usageMd ? [usageMd, ""] : []),
+    ...(usageMd ? [usageMd, ""] : pendingMd ? [pendingMd, ""] : []),
     `Sources: ${sources}`,
   ].join("\n")
 }
@@ -1279,6 +1279,7 @@ export function statusPayload(
   usage: UsageSnapshot[] = [],
   keys: UsageKeyDiagnostic[] = [],
   hidden: string[] = [],
+  insecure = false,
 ) {
   const localTz = Intl.DateTimeFormat().resolvedOptions().timeZone || "local"
   return {
@@ -1288,8 +1289,11 @@ export function statusPayload(
     utc: fmtClock(now, "UTC"),
     onlyConfigured: opts.onlyConfigured !== false,
     hidden,
+    insecure,
     usage: {
       enabled: opts.usage?.enabled ?? true,
+      pending: keys.length > 0 && usage.length === 0,
+      pendingSources: keys.filter((k) => !usage.some((s) => s.id === k.source)).map((k) => k.source),
       refreshMin: opts.usage?.refreshMin ?? 5,
       alertPct: opts.usage?.alertPct ?? 80,
       sources: usage.map((s) => {
@@ -1321,9 +1325,7 @@ export function statusPayload(
         }
       }),
     },
-    providers: enrich(providers, now).map((e) => {
-      const day = daySegments(e.pv, now)
-      return {
+    providers: enrich(providers, now).map((e) => ({
       id: e.pv.id,
       name: e.pv.name,
       scope: e.pv.scope,
@@ -1332,17 +1334,16 @@ export function statusPayload(
       state: e.state,
       stateLabel: STATE_TAG[e.state],
       windows: e.windows,
+      peakWindows: e.pv.peakWindows.map((w) => ({ days: w.days, startMin: toMin(w.start), endMin: toMin(w.end) })),
       models: e.pv.models ?? [],
       benefit: e.pv.benefit,
       note: e.pv.note ?? null,
       pct: e.pct,
       sinceLocal: e.status.since != null ? fmtClock(e.status.since) : null,
       untilLabel: e.untilLabel,
-      day: { segments: day.segments, nowMin: day.nowMin, nowLabel: day.nowLabel },
       source: e.pv.source,
       checked: e.pv.checked,
-      }
-    }),
+    })),
   }
 }
 
@@ -1359,8 +1360,9 @@ const HTML_PAGE = `<!doctype html><html><head><meta charset="utf-8">
 html[data-theme="light"]{--bg:#f4f6f9;--card:#ffffff;--border:#d9dfe7;--ink:#1d2229;--mut:#5c6674;--faint:#79828f;--peakbg:#fcf1d8;--peakink:#8a5c07;--peakbd:#e5cb8d;--offbg:#e3f4ea;--offink:#147648;--offbd:#b5dfc9;--nonebg:#eceff3;--noneink:#5c6674;--nonebd:#cfd6df;--accent:#1e63cf;--err:#bd3a3a;--stale:#8a5c07;--barbg:#e2e7ee;--peakseg:#d7991c;--now:#1d2229;color-scheme:light}
 body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 ui-sans-serif,system-ui,"Segoe UI",sans-serif;padding:28px}
 h1{font-size:17px;margin:0 0 2px;display:flex;align-items:center}.sub{color:var(--mut);font-size:12px;margin-bottom:22px}
-#theme{margin-left:auto;background:var(--card);color:var(--mut);border:1px solid var(--border);border-radius:999px;font:inherit;font-size:11px;padding:3px 11px;cursor:pointer}
-#theme:hover{color:var(--ink)}
+#theme,#rfrsh{margin-left:8px;background:var(--card);color:var(--mut);border:1px solid var(--border);border-radius:999px;font:inherit;font-size:11px;padding:3px 11px;cursor:pointer}
+#theme{margin-left:auto}
+#theme:hover,#rfrsh:hover{color:var(--ink)}
 .grid{display:grid;gap:14px;grid-template-columns:repeat(auto-fill,minmax(330px,1fr))}
 .card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px 16px}
 .top{display:flex;align-items:center;gap:10px;margin-bottom:6px}
@@ -1384,8 +1386,11 @@ a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
 .daybar>i{position:absolute;top:0;bottom:0;background:var(--peakseg)}
 .daybar>u{position:absolute;top:0;bottom:0;width:2px;background:var(--now);box-shadow:0 0 0 1px var(--card)}
 .daymeta{display:flex;justify-content:space-between;gap:10px;font-size:10px;color:var(--faint);margin-top:4px}
+.warn{background:var(--peakbg);color:var(--peakink);border:1px solid var(--peakbd);border-radius:8px;padding:6px 11px;font-size:12px;margin:10px 0 0}
+@keyframes slide{0%{transform:translateX(-110%)}100%{transform:translateX(370%)}}
+.bar.loading>i{width:28%;background:var(--accent);animation:slide 1.1s linear infinite}
 </style></head><body>
-<h1>Model provider peak-hours<button id="theme" title="color scheme: auto / light / dark">◐ auto</button></h1><div class="sub" id="clocks"></div><div class="grid" id="grid"></div>
+<h1>Model provider peak-hours<button id="rfrsh" title="poll provider accounts now">↻ refresh</button><button id="theme" title="color scheme: auto / light / dark">◐ auto</button></h1><div id="warn"></div><div class="sub" id="clocks"></div><div class="grid" id="grid"></div>
 <div id="usage"></div>
 <script>
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
@@ -1395,23 +1400,53 @@ function applyTheme(){var t=themePref();var dark=t==="dark"||(t==="auto"&&(!wind
 function cycleTheme(){var t=themePref();t=THEME_ORDER[(THEME_ORDER.indexOf(t)+1)%3];try{localStorage.setItem("opencode-quotas-theme",t)}catch(e){}applyTheme()}
 applyTheme();document.getElementById("theme").onclick=cycleTheme;
 if(window.matchMedia)try{matchMedia("(prefers-color-scheme: dark)").addEventListener("change",function(){if(themePref()==="auto")applyTheme()})}catch(e){}
+function zp(d,tz){try{var f=new Intl.DateTimeFormat("en-US",{timeZone:tz,hour12:false,year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit"}),a={},it,f2;for(it of f.formatToParts(d))a[it.type]=it.value;return{y:+a.year,mo:+a.month,d:+a.day,hh:(+a.hour)%24,mm:+a.minute,wd:new Date(Date.UTC(+a.year,+a.month-1,+a.day)).getUTCDay()}}catch(e){return null}}
+function tzOff(tz,epoch){var p=zp(new Date(epoch),tz);if(!p)return 0;var asUTC=Date.UTC(p.y,p.mo-1,p.d,p.hh,p.mm);return Math.round((asUTC-Math.floor(epoch/60000)*60000)/60000)}
+function wallUTC(tz,y,mo,d,hh,mm){var g=Date.UTC(y,mo-1,d,hh,mm),i;for(i=0;i<3;i++){var o=tzOff(tz,g);g=Date.UTC(y,mo-1,d,hh,mm)-o*60000}return g}
+function localDayBar(p,now){
+ if(!p.peakWindows||!p.peakWindows.length)return "";
+ var d=new Date(),mid=new Date(d.getFullYear(),d.getMonth(),d.getDate()).getTime(),end=mid+864e5,segs=[],i,off,w;
+ for(i=0;i<p.peakWindows.length;i++){w=p.peakWindows[i];
+  for(off=-1;off<=1;off++){
+   var base=mid+off*864e5,pr=zp(new Date(base),p.tz);if(!pr||w.days.indexOf(pr.wd)<0)continue;
+   var s=wallUTC(p.tz,pr.y,pr.mo,pr.d,Math.floor(w.startMin/60),w.startMin%60);
+   var e=w.endMin>w.startMin?wallUTC(p.tz,pr.y,pr.mo,pr.d,Math.floor(w.endMin/60),w.endMin%60):wallUTC(p.tz,pr.y,pr.mo,pr.d+1,Math.floor(w.endMin/60),w.endMin%60);
+   if(isNaN(s)||isNaN(e))continue;
+   var a=Math.max(mid,s),b=Math.min(end,e);if(b>a)segs.push([a,b]);
+  }}
+ segs.sort(function(x,y){return x[0]-y[0]});
+ var bars="",j;for(j=0;j<segs.length;j++)bars+='<i style="left:'+((segs[j][0]-mid)/864e5*100)+'%;width:'+((segs[j][1]-segs[j][0])/864e5*100)+'%"></i>';
+ var nowPos=Math.max(0,Math.min(100,(now-mid)/864e5*100));
+ return '<div class="daybar">'+bars+'<u style="left:'+nowPos+'%" title="now"></u></div><div class="daymeta"><span>00:00 local</span><span>peaks shown in your local day · source tz '+esc(p.tz)+'</span><span>24:00</span></div>';
+}
+var last=null;
 async function refresh(){
  try{
-  const d=await(await fetch("/api/status")).json();
+  const d=last=await(await fetch("/api/status")).json();
+  document.getElementById("warn").innerHTML=d.insecure?'⚠ reachable on LAN without authentication — set OPENCODE_SERVER_PASSWORD (same as opencode web)':""; 
+  document.getElementById("rfrsh").style.display=(d.usage&&d.usage.enabled)?"":"none";
   document.getElementById("clocks").textContent="local "+d.local.time+" ("+d.local.tz+") · UTC "+d.utc+" · lead-time alerts "+d.leadMinutes+" min · auto-refresh 30 s"+(d.hidden&&d.hidden.length?" · hidden (no API key): "+d.hidden.join(", "):"");
   document.getElementById("grid").innerHTML=d.providers.length?d.providers.map(p=>{
    const badge=p.state==="peak"?'<span class="badge peak">PEAK</span>':p.state==="offpeak"?'<span class="badge off">OFF-PEAK</span>':'<span class="badge none">NO FIXED WINDOW</span>';
    const bar=p.pct==null?"":'<div class="bar"><i style="width:'+p.pct+'%;background:'+(p.state==="peak"?"var(--peakseg)":"var(--offink)")+'"></i></div><div class="meta"><span>window started '+esc(p.sinceLocal||"")+'</span><span>'+esc(p.untilLabel||"")+"</span></div>";
-   const day=p.windows.length&&p.day?'<div class="daybar">'+p.day.segments.map(function(s){return '<i style="left:'+(s[0]/14.4)+'%;width:'+((s[1]-s[0])/14.4)+'%"></i>'}).join("")+'<u style="left:'+(p.day.nowMin/14.4)+'%" title="now '+esc(p.day.nowLabel)+" "+esc(p.tz)+'"></u></div><div class="daymeta"><span>00:00</span><span>now '+esc(p.day.nowLabel)+" · "+esc(p.tz)+'</span><span>24:00</span></div>':"";
+   const day=localDayBar(p,Date.now());
    return '<div class="card"><div class="top"><span class="name">'+esc(p.name)+"</span>"+badge+'</div><div class="win">'+esc(p.scopeLabel)+" · tz "+esc(p.tz)+"</div>"+(p.windows.length?'<div class="win">peak: '+p.windows.map(esc).join(" & ")+"</div>":"")+'<div class="b">'+esc(p.benefit)+"</div>"+(p.note?'<div class="note">'+esc(p.note)+"</div>":"")+day+bar+'<div class="src">source: <a href="'+esc(p.source)+'" target="_blank" rel="noreferrer">'+esc(p.source.split("/")[2])+"</a> · verified "+esc(p.checked)+"</div></div>";
   }).join(""):'<div class="card">'+esc(d.hidden&&d.hidden.length?"All tracked providers are hidden — no API key configured for: "+d.hidden.join(", "):"no providers to show")+"</div>";
   document.getElementById("usage").innerHTML=usageHtml(d.usage);
  }catch(e){document.getElementById("grid").innerHTML='<div class="card">status unavailable: '+esc(e.message)+"</div>"}
+ finally{var pend=last&&last.usage&&last.usage.pending&&last.usage.sources&&!last.usage.sources.length;setTimeout(refresh,pend?2000:30000)}
 }
-refresh();setInterval(refresh,30000);
+document.getElementById("rfrsh").onclick=function(){try{fetch("/api/usage/refresh",{method:"POST"})}catch(e){};setTimeout(refresh,1500);setTimeout(refresh,4000)};
+refresh();
 function usageHtml(u){
+ if(!u||!u.enabled)return "";
  var srcs=(u&&u.sources)||[];
- if(!u||!u.enabled||!srcs.length)return "";
+ var head='<h1 style="font-size:15px;margin:26px 0 12px">Quota &amp; balance</h1>';
+ if(!srcs.length){
+  var pend=(u.pending&&u.pendingSources&&u.pendingSources.length)?u.pendingSources:[];
+  if(pend.length)return head+'<div class="grid">'+pend.map(function(id){return '<div class="card"><div class="top"><span class="name">'+esc(id)+'</span></div><div class="bar loading"><i></i></div><div class="meta"><span>waiting for first poll…</span><span></span></div></div>'}).join("")+"</div>";
+  return head+'<div class="card">no API keys found — run <code>opencode auth login &lt;provider&gt;</code> or set OPENCODE_QUOTAS_&lt;PROVIDER&gt;_API_KEY (see README)</div>';
+ }
  var cards=srcs.map(function(s){
   var head='<div class="top"><span class="name">'+esc(s.name)+'</span>'+(s.plan?'<span class="badge none">'+esc(s.plan)+'</span>':"")+'</div>';
   var keyline=s.keyOrigin?'<div class="note">key: '+esc(s.keyOrigin)+(s.keyHint?" "+esc(s.keyHint):"")+"</div>":"";
@@ -1426,7 +1461,7 @@ function usageHtml(u){
   var upd=s.fetchedAgo?'<div class="note">updated '+esc(s.fetchedAgo)+"</div>":"";
   return '<div class="card">'+head+keyline+wins+stale+upd+"</div>";
  }).join("");
- return '<h1 style="font-size:15px;margin:26px 0 12px">Quota &amp; balance</h1><div class="grid">'+cards+"</div>";
+ return head+'<div class="grid">'+cards+"</div>";
 }
 </script></body></html>`
 
@@ -1487,6 +1522,7 @@ function route(
   keys: UsageKeyDiagnostic[] = [],
   hidden: string[] = [],
   allowCors = false,
+  insecure = false,
 ): Route {
   let pathname = path
   try {
@@ -1495,13 +1531,14 @@ function route(
     /* keep raw */
   }
   const cors: Record<string, string> = allowCors ? { "Access-Control-Allow-Origin": "*" } : {}
+  const usagePending = keys.length > 0 && usage.length === 0
   if (pathname === "/" || pathname === "/index.html")
     return { status: 200, type: "text/html; charset=utf-8", body: HTML_PAGE, cors }
   if (pathname === "/api/status")
     return {
       status: 200,
       type: "application/json; charset=utf-8",
-      body: JSON.stringify(statusPayload(providers, opts, Date.now(), usage, keys, hidden)),
+      body: JSON.stringify(statusPayload(providers, opts, Date.now(), usage, keys, hidden, insecure)),
       cors,
     }
   if (pathname === "/api/usage")
@@ -1512,12 +1549,17 @@ function route(
       cors,
     }
   if (pathname === "/opencode-quotas.txt")
-    return { status: 200, type: "text/plain; charset=utf-8", body: textTable(providers, Date.now(), usage), cors }
+    return {
+      status: 200,
+      type: "text/plain; charset=utf-8",
+      body: textTable(providers, Date.now(), usage, usagePending),
+      cors,
+    }
   if (pathname === "/favicon.ico") return { status: 204, type: "text/plain", body: "", cors }
   return {
     status: 404,
     type: "text/plain; charset=utf-8",
-    body: "not found (routes: / /api/status /api/usage /opencode-quotas.txt)",
+    body: "not found (routes: / /api/status /api/usage /opencode-quotas.txt; POST /api/usage/refresh)",
     cors,
   }
 }
@@ -1533,10 +1575,18 @@ export async function startCompanionServer(
   keys: () => UsageKeyDiagnostic[] = () => [],
   hidden: () => string[] = () => [],
   auth: ServerAuth = null,
+  refresh: () => Promise<void> | void = () => {},
 ): Promise<CompanionServer> {
   const hostname = opts.hostname ?? "0.0.0.0"
   const loopback = LOOPBACK_HOSTS.has(hostname)
   const allowCors = loopback && !auth
+  const insecure = !loopback && !auth
+  const refreshAccepted = (cors: Record<string, string>): Route => ({
+    status: 202,
+    type: "application/json; charset=utf-8",
+    body: JSON.stringify({ ok: true, message: "quota refresh triggered" }),
+    cors,
+  })
   const Bun_ = (globalThis as unknown as {
     Bun?: {
       serve: (o: unknown) => { port: number; stop: (c: boolean) => void }
@@ -1549,17 +1599,20 @@ export async function startCompanionServer(
         const srv = Bun_.serve({
           port: p,
           hostname,
-          fetch: (req: { url: string; headers: { get: (k: string) => string | null } }) => {
+          fetch: (req: { url: string; method?: string; headers: { get: (k: string) => string | null } }) => {
             if (!basicAuthOk(req.headers?.get?.("authorization"), auth)) {
               const u = unauthorized()
               return new Response(u.body, { status: u.status, headers: { "Content-Type": u.type, ...u.cors } })
             }
-            const r = route(new URL(req.url).pathname + new URL(req.url).search, providers, opts, usage(), keys(), hidden(), allowCors)
+            if ((req.method ?? "GET") === "POST" && new URL(req.url).pathname === "/api/usage/refresh") {
+              void refresh()
+              const r = refreshAccepted(allowCors ? { "Access-Control-Allow-Origin": "*" } : {})
+              return new Response(r.body, { status: r.status, headers: { "Content-Type": r.type, ...r.cors } })
+            }
+            const r = route(new URL(req.url).pathname + new URL(req.url).search, providers, opts, usage(), keys(), hidden(), allowCors, insecure)
             return new Response(r.body, { status: r.status, headers: { "Content-Type": r.type, ...r.cors } })
           },
         })
-        if (!loopback && !auth)
-          console.error("[opencode-quotas] dashboard bound to " + hostname + " without authentication — set OPENCODE_SERVER_PASSWORD (same as opencode web) to protect it")
         return { url: `http://${displayHost(hostname)}:${srv.port}`, port: srv.port, stop: () => srv.stop(true) }
       } catch (err) {
         lastErr = err
@@ -1568,7 +1621,7 @@ export async function startCompanionServer(
     throw lastErr
   }
   const http = (await import("node:http")) as unknown as {
-    createServer: (cb: (req: { url?: string; headers?: Record<string, string | string[] | undefined> }, res: { writeHead: (s: number, h: Record<string, string>) => void; end: (b: string) => void }) => void) => {
+    createServer: (cb: (req: { url?: string; method?: string; headers?: Record<string, string | string[] | undefined> }, res: { writeHead: (s: number, h: Record<string, string>) => void; end: (b: string) => void }) => void) => {
       listen: (port: number, host: string, cb: () => void) => void
       close: () => void
       on: (ev: string, cb: (e: unknown) => void) => void
@@ -1586,7 +1639,14 @@ export async function startCompanionServer(
         res.end(u.body)
         return
       }
-      const r = route(req.url ?? "/", providers, opts, usage(), keys(), hidden(), allowCors)
+      if ((req.method ?? "GET") === "POST" && (req.url ?? "").split("?")[0] === "/api/usage/refresh") {
+        void refresh()
+        const r = refreshAccepted(allowCors ? { "Access-Control-Allow-Origin": "*" } : {})
+        res.writeHead(r.status, { "Content-Type": r.type, ...r.cors })
+        res.end(r.body)
+        return
+      }
+      const r = route(req.url ?? "/", providers, opts, usage(), keys(), hidden(), allowCors, insecure)
       res.writeHead(r.status, { "Content-Type": r.type, ...r.cors })
       res.end(r.body)
     })
@@ -1596,8 +1656,6 @@ export async function startCompanionServer(
         srv.listen(p, hostname, resolve)
       })
       const bound = srv.address()?.port ?? p
-      if (!loopback && !auth)
-        console.error("[opencode-quotas] dashboard bound to " + hostname + " without authentication — set OPENCODE_SERVER_PASSWORD (same as opencode web) to protect it")
       return { url: `http://${displayHost(hostname)}:${bound}`, port: bound, stop: () => srv.close() }
     } catch (err) {
       lastErr = err
@@ -1851,10 +1909,20 @@ export const OpencodeQuotasPlugin: Plugin = async ({ client, $, directory }, opt
   // --- companion server ----------------------------------------------------
 
   const auth = serverAuthFromEnv()
+  const usagePending = (): boolean => keyInfo.size > 0 && usageState.size === 0
   let server: CompanionServer | null = null
   if ((opts.port ?? 0) > 0) {
     try {
-      server = await startCompanionServer(opts.port!, visible, opts, usageSnapshots, usageKeyDiags, hiddenIds, auth)
+      server = await startCompanionServer(
+        opts.port!,
+        visible,
+        opts,
+        usageSnapshots,
+        usageKeyDiags,
+        hiddenIds,
+        auth,
+        () => refreshUsage(),
+      )
     } catch (err) {
       console.error("[opencode-quotas] companion server could not start:", err instanceof Error ? err.message : err)
     }
@@ -1879,11 +1947,12 @@ export const OpencodeQuotasPlugin: Plugin = async ({ client, $, directory }, opt
       if (!opts.command || !server) return
       config.command = config.command ?? {}
       const curlAuth = auth ? ' -u "${OPENCODE_SERVER_USERNAME:-opencode}:${OPENCODE_SERVER_PASSWORD}"' : ""
+      const curl = "curl -sf" + curlAuth
       config.command["quotas"] = {
         template: [
           "The shell output below is the live model-provider peak-hours status fetched from the opencode-quotas companion server.",
           "Render it for the user EXACTLY as given (keep every provider row and number); do not add, drop or reinterpret rows. If the output says the server is unreachable, just say so.",
-          "!`curl -sf -m 2" + curlAuth + " " + server.url + "/opencode-quotas.txt || echo OPENCODE_QUOTAS_SERVER_UNREACHABLE`",
+          "!`" + curl + " -m 3 -X POST " + server.url + "/api/usage/refresh -o /dev/null 2>/dev/null; sleep 2; " + curl + " -m 5 " + server.url + "/opencode-quotas.txt || echo OPENCODE_QUOTAS_SERVER_UNREACHABLE`",
         ].join("\n"),
         description: "Show model-provider peak/off-peak hours + live quota & balance (status table)",
       }
@@ -1927,7 +1996,7 @@ export const OpencodeQuotasPlugin: Plugin = async ({ client, $, directory }, opt
             .prompt({
               path: { id: info.id },
               body: {
-                parts: [{ type: "text", text: markdownCard(visible, Date.now(), usageSnapshots()), synthetic: true, ignored: true }],
+                parts: [{ type: "text", text: markdownCard(visible, Date.now(), usageSnapshots(), usagePending()), synthetic: true, ignored: true }],
                 noReply: true,
               },
             })

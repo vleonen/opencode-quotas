@@ -124,36 +124,37 @@ needed. Running it does two things:
 
 1. **Instant toast** (zero model cost) with the current peak/off-peak state of every
    tracked provider, the countdown to the next window flip, and the dashboard URL.
-2. **Live status table** echoed into the conversation: the command's template fetches
-   `/opencode-quotas.txt` from the companion server via `curl` and the model renders it
-   verbatim, including the quota & balance section when keys are configured.
+2. **Fresh live status table** echoed into the conversation: the command's template
+   first triggers a quota/balance poll (`POST /api/usage/refresh`), waits ~2 s, then
+   fetches `/opencode-quotas.txt` from the companion server via `curl` and the model
+   renders it verbatim, including the quota & balance section when keys are configured.
 
 Example of the table the command injects into the conversation (synthetic values):
 
 ```text
-Model provider peak-hours — 15:38 local · 12:38 UTC
+Model provider peak-hours — 16:11 local · 13:11 UTC
 ---------------------------------------------------
 DeepSeek API  [OFF-PEAK]
   window : Mon-Fri 01:00-04:00 UTC & Mon-Fri 06:00-10:00 UTC
-  24h    : ░▓▓▓░░▓▓▓▓░░▯░░░░░░░░░░░ (midnight-aligned, UTC)
-  next   : peak starts 04:00 local (01:00 UTC) — in 12h 21m
+  24h    : ░░░░▓▓▓░░▓▓▓▓░░░▯░░░░░░░ (local day)
+  next   : peak starts 04:00 local (01:00 UTC) — in 11h 48m
   benefit: Off-peak prices are HALF peak rates (e.g. deepseek-flash input $0.15 vs $0.30 per 1M cache-miss tokens).
   source : https://api-docs.deepseek.com/quick_start/pricing (verified 2026-09-17)
 z.ai GLM Coding Plan  [OFF-PEAK]
   window : Mon-Fri 14:00-18:00 UTC+8
-  24h    : ░░░░░░░░░░░░░░▓▓▓▓░░▯░░░ (midnight-aligned, Asia/Singapore)
-  next   : peak starts 09:00 local (06:00 UTC) — in 17h 21m
+  24h    : ░░░░░░░░░▓▓▓▓░░░▯░░░░░░░ (local day)
+  next   : peak starts 09:00 local (06:00 UTC) — in 16h 48m
   benefit: Off-peak: credits burn at 0.5x; GLM-5.3 quota 1x (vs 3x peak); weekends all off-peak.
   source : https://docs.z.ai/devpack/overview (verified 2026-09-17)
 Kimi Code (Moonshot)  [OFF-PEAK]
   window : Mon-Fri 14:00-17:00 UTC+8
-  24h    : ░░░░░░░░░░░░░░▓▓▓░░░▯░░░ (midnight-aligned, Asia/Shanghai)
-  next   : peak starts 09:00 local (06:00 UTC) — in 17h 21m
+  24h    : ░░░░░░░░░▓▓▓░░░░▯░░░░░░░ (local day)
+  next   : peak starts 09:00 local (06:00 UTC) — in 16h 48m
   benefit: Outside the congestion window, 429s are far less likely.
   source : https://www.kimi.com/code/docs/en/kimi-code/error-reference.html (verified 2026-09-17)
 MiniMax Token Plan  [—]
   window : no fixed peak hours published
-  24h    : ░░░░░░░░░░░░░░░░░░░░▯░░░ (midnight-aligned, Asia/Shanghai)
+  24h    : ░░░░░░░░░░░░░░░░▯░░░░░░░ (local day)
   next   : -
   benefit: Quota runs on 5-hour rolling + weekly windows.
   source : https://platform.minimax.io/docs/token-plan/faq (verified 2026-09-17)
@@ -193,20 +194,28 @@ the model. Child/subagent sessions are skipped. Disable with
 ### Companion dashboard
 
 A tiny status server (Bun.serve with a `node:http` fallback) serves a dark/light,
-auto-refreshing dashboard — each provider card has a **24-hour peak bar** (amber peak
-segments, current-time marker, provider-tz clock) plus window and quota progress bars,
-reset countdowns, local + UTC clocks, and color-coded usage (green < 60 %, amber < 85 %,
-red ≥ 85 %). A scheme toggle (`◐ auto / ☀ light / ☾ dark`) follows your OS/browser
-scheme by default and remembers the choice; the text table, toasts, and session cards
-show a matching 24-slot sparkline (`▓` peak / `░` off-peak / `▮` now).
+auto-refreshing dashboard — each provider card has a **24-hour peak bar aligned to
+your browser's local midnight** (peak windows repositioned into your local day with a
+current-time marker) plus window and quota progress bars, reset countdowns, local +
+UTC clocks, and color-coded usage (green < 60 %, amber < 85 %, red ≥ 85 %). While the
+first provider poll is still in flight, the quota section shows **skeleton cards**
+("waiting for first poll…") and the page re-polls every 2 s until data lands, then
+settles to 30 s. A **↻ refresh** button triggers an immediate re-poll (the `/quotas`
+command does the same before rendering). A scheme toggle (`◐ auto / ☀ light / ☾ dark`)
+follows your OS/browser scheme by default and remembers the choice; the text table,
+toasts, and session cards show a matching 24-slot sparkline over your local day
+(`▓` peak / `░` off-peak / `▮` now). When bound to a non-loopback address without a
+password, the page shows an "unsecured — reachable on LAN" banner instead of logging
+console noise.
 
 ![Companion dashboard — light scheme, provider cards with 24h peak bars and the quota & balance section](screenshot.png)
 
 | Route | Description |
 |---|---|
-| `/` | Live dashboard (auto-refresh 30 s) |
-| `/api/status` | JSON: provider states, windows, day-bar segments, countdowns, clocks, usage snapshot |
+| `/` | Live dashboard (adaptive refresh: 2 s while loading, then 30 s) |
+| `/api/status` | JSON: provider states, raw peak windows, countdowns, clocks, usage snapshot + pending flags |
 | `/api/usage` | JSON: raw per-source quota/balance snapshots |
+| `POST /api/usage/refresh` | Force an immediate quota/balance poll (returns 202) |
 | `/opencode-quotas.txt` | Plain-text table — what the `/quotas` command injects |
 
 ### Authentication
@@ -407,6 +416,7 @@ Peak windows are stored in the provider's own timezone and converted with `Intl`
 | `/quotas` shows `OPENCODE_QUOTAS_SERVER_UNREACHABLE` | The companion server is disabled (`port: 0`), stopped, or `curl` is missing / slower than the 2 s template timeout. With authentication enabled, the shell that runs the command must also have `OPENCODE_SERVER_PASSWORD` / `OPENCODE_SERVER_USERNAME` exported (the template reads them from the environment). |
 | Dashboard asks for username/password | `OPENCODE_SERVER_PASSWORD` is set — the dashboard shares opencode web's Basic auth. Use `OPENCODE_SERVER_USERNAME` (default `opencode`) and that password. |
 | No providers shown (only a hint line) | `onlyConfigured` is on and no provider has a resolved API key — run `opencode auth login` or set a `OPENCODE_QUOTAS_<PROVIDER>_API_KEY`, or set `onlyConfigured: false`. |
+| Quota & balance stuck on "waiting for first poll…" | The first poll runs ~1.5 s after startup and provider APIs can take seconds; the dashboard re-polls every 2 s until data lands. If it never fills, check `/api/usage` → `keys[]` (key resolved?) and the per-source `error` fields (wrong region / invalid key). |
 | Quota & balance section is missing | No API key found in options, env, or OpenCode's auth store — the polling stays inert by design. Run `opencode auth login` or set a `OPENCODE_QUOTAS_*` var. |
 | Key added via `opencode auth login` is not picked up | The store id does not map to a source (see the mapping table above), `usage.authStore` is off, or `OPENCODE_AUTH_CONTENT` is overriding the file (opencode honors that env var too). Check `GET /api/usage` → `keys[]` to see what the plugin resolved. |
 | A provider shows an error or stale data | Wrong key or wrong region (`global` vs `cn`). The last good snapshot is kept and the error is surfaced on the dashboard. |

@@ -54,7 +54,7 @@ plugin — it only holds gitignored dev deps.
    `fetchUsageSnapshot`, key resolution = options → `OPENCODE_QUOTAS_*` env → OpenCode
    `auth.json` credential store (read-only, cached by mtime) → standard provider env.
 5. Companion server (`startCompanionServer`): Bun.serve with `node:http` fallback;
-   routes `/`, `/api/status`, `/api/usage`, `/opencode-quotas.txt`.
+   routes `/`, `/api/status`, `/api/usage`, `/opencode-quotas.txt`, `POST /api/usage/refresh`.
 6. `OpencodeQuotasPlugin` (default export) — entrypoint wiring hooks/timers; the
    `/quotas` command is registered via the `config` hook.
 
