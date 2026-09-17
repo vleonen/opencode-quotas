@@ -9,7 +9,7 @@
  * What it does:
  *  - Toast in the TUI when a client connects (compact status of every provider).
  *  - Lead-time toast before a provider enters / leaves its peak window (default 15 min).
- *  - Registers a /peakhours command (via the config hook, no opencode.json edits needed)
+ *  - Registers a /quotas command (via the config hook, no opencode.json edits needed)
  *    that fires an instant toast AND echoes a live status table through the model.
  *  - Posts a markdown status card into every new session (visible in TUI and web UI),
  *    using a no-reply synthetic message so it costs zero model tokens.
@@ -18,14 +18,14 @@
  *  - Optionally polls each provider's own account API for subscription quota /
  *    budget / balance (DeepSeek, z.ai, Kimi Code, Moonshot, MiniMax, OpenCode Zen)
  *    and renders it next to the peak-hours data — including low-quota alerts.
- *  - Resolves those API keys with zero config: plugin options -> PEAKHOURS_* env ->
+ *  - Resolves those API keys with zero config: plugin options -> OPENCODE_QUOTAS_* env ->
  *    OpenCode's own credential store (auth.json written by `opencode auth login`,
  *    or OPENCODE_AUTH_CONTENT) -> standard provider env (DEEPSEEK_API_KEY, ...).
  *
  * Configure via plugin options in opencode.json  —  e.g.
  *   { "plugin": [ [ "./.opencode/plugins/opencode-quotas.ts", { "port": 4117, "leadMinutes": 15 } ] ] }
- * or via environment variables (see README): PEAKHOURS_PORT, PEAKHOURS_LEAD_MINUTES,
- * PEAKHOURS_DEEPSEEK_API_KEY, PEAKHOURS_ZAI_API_KEY, PEAKHOURS_KIMI_CODE_API_KEY, ...
+ * or via environment variables (see README): OPENCODE_QUOTAS_PORT, OPENCODE_QUOTAS_LEAD_MINUTES,
+ * OPENCODE_QUOTAS_DEEPSEEK_API_KEY, OPENCODE_QUOTAS_ZAI_API_KEY, OPENCODE_QUOTAS_KIMI_CODE_API_KEY, ...
  *
  * Provider data was verified against official docs on 2026-09-17 (see PROVIDERS + README).
  */
@@ -69,30 +69,30 @@ export type ProviderDef = {
   checked: string
 }
 
-export type PeakHoursOptions = {
-  /** Companion server port. 0 disables the server. Default 4117 (env PEAKHOURS_PORT). */
+export type OpencodeQuotasOptions = {
+  /** Companion server port. 0 disables the server. Default 4117 (env OPENCODE_QUOTAS_PORT). */
   port?: number
-  /** Companion server bind address. Default "0.0.0.0" (env PEAKHOURS_HOSTNAME); use 127.0.0.1 for loopback only. */
+  /** Companion server bind address. Default "0.0.0.0" (env OPENCODE_QUOTAS_HOSTNAME); use 127.0.0.1 for loopback only. */
   hostname?: string
-  /** Warn N minutes before a window flips; 0 disables alerts. Default 15 (env PEAKHOURS_LEAD_MINUTES). */
+  /** Warn N minutes before a window flips; 0 disables alerts. Default 15 (env OPENCODE_QUOTAS_LEAD_MINUTES). */
   leadMinutes?: number
-  /** Show a compact status toast when a TUI/web client connects. Default true (env PEAKHOURS_TOAST_ON_CONNECT). */
+  /** Show a compact status toast when a TUI/web client connects. Default true (env OPENCODE_QUOTAS_TOAST_ON_CONNECT). */
   toastOnConnect?: boolean
-  /** Post a markdown status card into every new top-level session. Default true (env PEAKHOURS_SESSION_CARD). */
+  /** Post a markdown status card into every new top-level session. Default true (env OPENCODE_QUOTAS_SESSION_CARD). */
   cardOnSessionStart?: boolean
-  /** Register the /peakhours command. Default true (env PEAKHOURS_COMMAND). */
+  /** Register the /quotas command. Default true (env OPENCODE_QUOTAS_COMMAND). */
   command?: boolean
-  /** Also fire desktop notifications on transitions. Default false (env PEAKHOURS_NOTIFY). */
+  /** Also fire desktop notifications on transitions. Default false (env OPENCODE_QUOTAS_NOTIFY). */
   notify?: boolean
-  /** Only track these provider ids. Default: all built-ins (env PEAKHOURS_PROVIDERS=deepseek,zai). */
+  /** Only track these provider ids. Default: all built-ins (env OPENCODE_QUOTAS_PROVIDERS=deepseek,zai). */
   providers?: string[]
   /** Extra user-defined providers appended to the registry. Always shown regardless of onlyConfigured. */
   custom?: ProviderDef[]
-  /** Show only providers whose usage source has a resolved API key. Default true (env PEAKHOURS_ONLY_CONFIGURED). */
+  /** Show only providers whose usage source has a resolved API key. Default true (env OPENCODE_QUOTAS_ONLY_CONFIGURED). */
   onlyConfigured?: boolean
   /** Live quota / balance / spend polling (see UsageOptions). */
   usage?: UsageOptions
-  /** Disable everything. Default false (env PEAKHOURS_DISABLE). */
+  /** Disable everything. Default false (env OPENCODE_QUOTAS_DISABLE). */
   disabled?: boolean
 }
 
@@ -440,7 +440,7 @@ function nowTag(e: Enriched): string {
 /** Shown when strict key filtering (onlyConfigured) leaves nothing to display. */
 const EMPTY_PROVIDERS_HINT =
   "no providers shown — onlyConfigured is on and no provider has a configured API key. " +
-  "Run 'opencode auth login <provider>' or set PEAKHOURS_<PROVIDER>_API_KEY, " +
+  "Run 'opencode auth login <provider>' or set OPENCODE_QUOTAS_<PROVIDER>_API_KEY, " +
   "or set option onlyConfigured: false to always show every provider."
 
 /** One line per provider, e.g. "DeepSeek API  PEAK · off-peak in 1h 55m". */
@@ -460,7 +460,7 @@ export function toastStatus(providers: ProviderDef[], now: number = Date.now()):
     .join("\n")
 }
 
-/** Plain-text table for the companion server (/peakhours.txt) and the /peakhours command. */
+/** Plain-text table for the companion server (/opencode-quotas.txt) and the /quotas command. */
 export function textTable(providers: ProviderDef[], now: number = Date.now(), usage: UsageSnapshot[] = []): string {
   const head = `Model provider peak-hours — ${fmtClock(now)} local · ${fmtClock(now, "UTC")} UTC`
   if (!providers.length) return `${head}\n${"".padEnd(head.length, "-")}\n${EMPTY_PROVIDERS_HINT}\n`
@@ -477,7 +477,7 @@ export function textTable(providers: ProviderDef[], now: number = Date.now(), us
       parts.push("", "Quota & balance (live from provider account APIs)", "".padEnd(44, "-"), ...lines.map((l) => `  ${l}`))
     }
   } else {
-    parts.push("", "quota & balance: no API keys found (not configured) — run 'opencode auth login <provider>' or set PEAKHOURS_<PROVIDER>_API_KEY (see README)")
+    parts.push("", "quota & balance: no API keys found (not configured) — run 'opencode auth login <provider>' or set OPENCODE_QUOTAS_<PROVIDER>_API_KEY (see README)")
   }
   parts.push("")
   return parts.join("\n")
@@ -579,24 +579,24 @@ export type ResolvedUsageOptions = Required<
 >
 
 export type UsageOptions = {
-  /** Poll provider usage APIs. Default true (env PEAKHOURS_USAGE); inert until a key is set. */
+  /** Poll provider usage APIs. Default true (env OPENCODE_QUOTAS_USAGE); inert until a key is set. */
   enabled?: boolean
-  /** Refresh interval in minutes (min 1). Default 5 (env PEAKHOURS_USAGE_REFRESH_MIN). */
+  /** Refresh interval in minutes (min 1). Default 5 (env OPENCODE_QUOTAS_USAGE_REFRESH_MIN). */
   refreshMin?: number
-  /** Per-request timeout in seconds. Default 8 (env PEAKHOURS_USAGE_TIMEOUT). */
+  /** Per-request timeout in seconds. Default 8 (env OPENCODE_QUOTAS_USAGE_TIMEOUT). */
   timeoutSec?: number
-  /** Warn when a window is >= this percent used; 0 disables. Default 80 (env PEAKHOURS_USAGE_ALERT_PCT). */
+  /** Warn when a window is >= this percent used; 0 disables. Default 80 (env OPENCODE_QUOTAS_USAGE_ALERT_PCT). */
   alertPct?: number
-  /** Toast when a PAYG balance falls to/below this value; null disables. (env PEAKHOURS_MIN_BALANCE). */
+  /** Toast when a PAYG balance falls to/below this value; null disables. (env OPENCODE_QUOTAS_MIN_BALANCE). */
   minBalance?: number | null
-  /** API keys per source (highest precedence). Each also has a PEAKHOURS_<SOURCE>_API_KEY
+  /** API keys per source (highest precedence). Each also has a OPENCODE_QUOTAS_<SOURCE>_API_KEY
    *  env var; when neither is set, keys are auto-resolved from OpenCode's credential store
    *  and standard provider env names (see resolveUsageKey). */
   keys?: UsageKeys
   /** Also resolve keys from OpenCode's own credential store (auth.json written by
    *  `opencode auth login`, or OPENCODE_AUTH_CONTENT) and standard provider env names
-   *  (DEEPSEEK_API_KEY, ZHIPU_API_KEY, ...). When false, only options + PEAKHOURS_* env
-   *  are used. Default true (env PEAKHOURS_USAGE_AUTH_STORE). */
+   *  (DEEPSEEK_API_KEY, ZHIPU_API_KEY, ...). When false, only options + OPENCODE_QUOTAS_* env
+   *  are used. Default true (env OPENCODE_QUOTAS_USAGE_AUTH_STORE). */
   authStore?: boolean
   /** z.ai endpoint region: global (api.z.ai) or cn (open.bigmodel.cn). Default global. */
   zaiRegion?: UsageRegion
@@ -970,7 +970,7 @@ const USAGE_SOURCES: UsageSourceDef[] = [
       const host = r === "cn" ? "https://api.minimaxi.com" : "https://api.minimax.io"
       return [`${host}/v1/token_plan/remains`, `${host}/v1/api/openplatform/coding_plan/remains`]
     },
-    headers: (k) => ({ ...bearer(k), "Content-Type": "application/json", "MM-API-Source": "opencode-peakhours" }),
+    headers: (k) => ({ ...bearer(k), "Content-Type": "application/json", "MM-API-Source": "opencode-quotas" }),
     parse: (d, n) => parseMiniMaxRemains(d, n),
   },
   {
@@ -1010,12 +1010,12 @@ export function authIdsFor(srcId: string, region: UsageRegion): string[] {
 
 /** Plugin-specific env var names per source (checked before the auth store). */
 const USAGE_SOURCE_ENV_NAMES: Record<string, string[]> = {
-  deepseek: ["PEAKHOURS_DEEPSEEK_API_KEY"],
-  zai: ["PEAKHOURS_ZAI_API_KEY"],
-  kimi: ["PEAKHOURS_KIMI_CODE_API_KEY", "PEAKHOURS_KIMI_API_KEY"],
-  moonshot: ["PEAKHOURS_MOONSHOT_API_KEY"],
-  minimax: ["PEAKHOURS_MINIMAX_CODING_API_KEY", "PEAKHOURS_MINIMAX_API_KEY"],
-  zen: ["PEAKHOURS_ZEN_API_KEY", "OPENCODE_API_KEY"],
+  deepseek: ["OPENCODE_QUOTAS_DEEPSEEK_API_KEY"],
+  zai: ["OPENCODE_QUOTAS_ZAI_API_KEY"],
+  kimi: ["OPENCODE_QUOTAS_KIMI_CODE_API_KEY", "OPENCODE_QUOTAS_KIMI_API_KEY"],
+  moonshot: ["OPENCODE_QUOTAS_MOONSHOT_API_KEY"],
+  minimax: ["OPENCODE_QUOTAS_MINIMAX_CODING_API_KEY", "OPENCODE_QUOTAS_MINIMAX_API_KEY"],
+  zen: ["OPENCODE_QUOTAS_ZEN_API_KEY", "OPENCODE_API_KEY"],
 }
 
 /** Standard provider env names (as used by opencode / models.dev), checked last. */
@@ -1114,7 +1114,7 @@ export function maskKey(key: string): string {
 }
 
 /**
- * Resolve one source's key. Precedence: plugin options -> PEAKHOURS_* env ->
+ * Resolve one source's key. Precedence: plugin options -> OPENCODE_QUOTAS_* env ->
  * OpenCode auth store (auth.json / OPENCODE_AUTH_CONTENT) -> standard provider env.
  * Pass authStore = null to disable the auto-discovery layer entirely.
  */
@@ -1274,7 +1274,7 @@ export function usageMarkdown(snapshots: UsageSnapshot[], now: number = Date.now
 /** JSON payload for the companion page (/api/status). */
 export function statusPayload(
   providers: ProviderDef[],
-  opts: PeakHoursOptions,
+  opts: OpencodeQuotasOptions,
   now: number = Date.now(),
   usage: UsageSnapshot[] = [],
   keys: UsageKeyDiagnostic[] = [],
@@ -1353,7 +1353,7 @@ export function statusPayload(
 const HTML_PAGE = `<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>opencode peak-hours</title>
-<script>try{var t=localStorage.getItem("peakhours-theme");if(t==="light"||t==="dark")document.documentElement.dataset.theme=t;else if(!matchMedia("(prefers-color-scheme: dark)").matches)document.documentElement.dataset.theme="light"}catch(e){}</script>
+<script>try{var t=localStorage.getItem("opencode-quotas-theme");if(t==="light"||t==="dark")document.documentElement.dataset.theme=t;else if(!matchMedia("(prefers-color-scheme: dark)").matches)document.documentElement.dataset.theme="light"}catch(e){}</script>
 <style>
 :root{--bg:#0e1013;--card:#161a20;--border:#232935;--ink:#d7dce3;--mut:#8b93a1;--faint:#77808f;--peakbg:#3a2b12;--peakink:#e8b04b;--peakbd:#6b4e1d;--offbg:#10281a;--offink:#57c98a;--offbd:#1e5233;--nonebg:#1c2027;--noneink:#8b93a1;--nonebd:#2a313d;--accent:#6aa7ff;--err:#e05e5e;--stale:#e8b04b;--barbg:#20262f;--peakseg:#e8b04b;--now:#ffffff;color-scheme:dark}
 html[data-theme="light"]{--bg:#f4f6f9;--card:#ffffff;--border:#d9dfe7;--ink:#1d2229;--mut:#5c6674;--faint:#79828f;--peakbg:#fcf1d8;--peakink:#8a5c07;--peakbd:#e5cb8d;--offbg:#e3f4ea;--offink:#147648;--offbd:#b5dfc9;--nonebg:#eceff3;--noneink:#5c6674;--nonebd:#cfd6df;--accent:#1e63cf;--err:#bd3a3a;--stale:#8a5c07;--barbg:#e2e7ee;--peakseg:#d7991c;--now:#1d2229;color-scheme:light}
@@ -1390,9 +1390,9 @@ a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
 <script>
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 var THEME_ORDER=["auto","light","dark"];
-function themePref(){try{var t=localStorage.getItem("peakhours-theme");return t==="light"||t==="dark"?t:"auto"}catch(e){return"auto"}}
+function themePref(){try{var t=localStorage.getItem("opencode-quotas-theme");return t==="light"||t==="dark"?t:"auto"}catch(e){return"auto"}}
 function applyTheme(){var t=themePref();var dark=t==="dark"||(t==="auto"&&(!window.matchMedia||matchMedia("(prefers-color-scheme: dark)").matches));document.documentElement.dataset.theme=dark?"dark":"light";var b=document.getElementById("theme");if(b)b.textContent=(t==="auto"?"◐":t==="light"?"☀":"☾")+" "+t}
-function cycleTheme(){var t=themePref();t=THEME_ORDER[(THEME_ORDER.indexOf(t)+1)%3];try{localStorage.setItem("peakhours-theme",t)}catch(e){}applyTheme()}
+function cycleTheme(){var t=themePref();t=THEME_ORDER[(THEME_ORDER.indexOf(t)+1)%3];try{localStorage.setItem("opencode-quotas-theme",t)}catch(e){}applyTheme()}
 applyTheme();document.getElementById("theme").onclick=cycleTheme;
 if(window.matchMedia)try{matchMedia("(prefers-color-scheme: dark)").addEventListener("change",function(){if(themePref()==="auto")applyTheme()})}catch(e){}
 async function refresh(){
@@ -1482,7 +1482,7 @@ function displayHost(hostname: string): string {
 function route(
   path: string,
   providers: ProviderDef[],
-  opts: PeakHoursOptions,
+  opts: OpencodeQuotasOptions,
   usage: UsageSnapshot[] = [],
   keys: UsageKeyDiagnostic[] = [],
   hidden: string[] = [],
@@ -1511,13 +1511,13 @@ function route(
       body: JSON.stringify({ generatedAt: new Date().toISOString(), sources: usage, keys }),
       cors,
     }
-  if (pathname === "/peakhours.txt")
+  if (pathname === "/opencode-quotas.txt")
     return { status: 200, type: "text/plain; charset=utf-8", body: textTable(providers, Date.now(), usage), cors }
   if (pathname === "/favicon.ico") return { status: 204, type: "text/plain", body: "", cors }
   return {
     status: 404,
     type: "text/plain; charset=utf-8",
-    body: "not found (routes: / /api/status /api/usage /peakhours.txt)",
+    body: "not found (routes: / /api/status /api/usage /opencode-quotas.txt)",
     cors,
   }
 }
@@ -1528,7 +1528,7 @@ export type CompanionServer = { url: string; port: number; stop: () => void }
 export async function startCompanionServer(
   port: number,
   providers: ProviderDef[],
-  opts: PeakHoursOptions,
+  opts: OpencodeQuotasOptions,
   usage: () => UsageSnapshot[] = () => [],
   keys: () => UsageKeyDiagnostic[] = () => [],
   hidden: () => string[] = () => [],
@@ -1559,7 +1559,7 @@ export async function startCompanionServer(
           },
         })
         if (!loopback && !auth)
-          console.error("[peakhours] dashboard bound to " + hostname + " without authentication — set OPENCODE_SERVER_PASSWORD (same as opencode web) to protect it")
+          console.error("[opencode-quotas] dashboard bound to " + hostname + " without authentication — set OPENCODE_SERVER_PASSWORD (same as opencode web) to protect it")
         return { url: `http://${displayHost(hostname)}:${srv.port}`, port: srv.port, stop: () => srv.stop(true) }
       } catch (err) {
         lastErr = err
@@ -1597,7 +1597,7 @@ export async function startCompanionServer(
       })
       const bound = srv.address()?.port ?? p
       if (!loopback && !auth)
-        console.error("[peakhours] dashboard bound to " + hostname + " without authentication — set OPENCODE_SERVER_PASSWORD (same as opencode web) to protect it")
+        console.error("[opencode-quotas] dashboard bound to " + hostname + " without authentication — set OPENCODE_SERVER_PASSWORD (same as opencode web) to protect it")
       return { url: `http://${displayHost(hostname)}:${bound}`, port: bound, stop: () => srv.close() }
     } catch (err) {
       lastErr = err
@@ -1626,21 +1626,21 @@ function envStr(name: string): string | undefined {
   return v && v.trim() !== "" ? v.trim() : undefined
 }
 
-function mergeOpts(options?: PeakHoursOptions): PeakHoursOptions {
+function mergeOpts(options?: OpencodeQuotasOptions): OpencodeQuotasOptions {
   const o = options ?? {}
   return {
-    port: o.port ?? envNum("PEAKHOURS_PORT", 4117),
-    hostname: o.hostname ?? envStr("PEAKHOURS_HOSTNAME") ?? "0.0.0.0",
-    leadMinutes: o.leadMinutes ?? envNum("PEAKHOURS_LEAD_MINUTES", 15),
-    toastOnConnect: o.toastOnConnect ?? envBool("PEAKHOURS_TOAST_ON_CONNECT", true),
-    cardOnSessionStart: o.cardOnSessionStart ?? envBool("PEAKHOURS_SESSION_CARD", true),
-    command: o.command ?? envBool("PEAKHOURS_COMMAND", true),
-    notify: o.notify ?? envBool("PEAKHOURS_NOTIFY", false),
-    providers: o.providers ?? (process.env.PEAKHOURS_PROVIDERS ? process.env.PEAKHOURS_PROVIDERS.split(",").map((s) => s.trim()).filter(Boolean) : undefined),
+    port: o.port ?? envNum("OPENCODE_QUOTAS_PORT", 4117),
+    hostname: o.hostname ?? envStr("OPENCODE_QUOTAS_HOSTNAME") ?? "0.0.0.0",
+    leadMinutes: o.leadMinutes ?? envNum("OPENCODE_QUOTAS_LEAD_MINUTES", 15),
+    toastOnConnect: o.toastOnConnect ?? envBool("OPENCODE_QUOTAS_TOAST_ON_CONNECT", true),
+    cardOnSessionStart: o.cardOnSessionStart ?? envBool("OPENCODE_QUOTAS_SESSION_CARD", true),
+    command: o.command ?? envBool("OPENCODE_QUOTAS_COMMAND", true),
+    notify: o.notify ?? envBool("OPENCODE_QUOTAS_NOTIFY", false),
+    providers: o.providers ?? (process.env.OPENCODE_QUOTAS_PROVIDERS ? process.env.OPENCODE_QUOTAS_PROVIDERS.split(",").map((s) => s.trim()).filter(Boolean) : undefined),
     custom: o.custom ?? [],
-    onlyConfigured: o.onlyConfigured ?? envBool("PEAKHOURS_ONLY_CONFIGURED", true),
+    onlyConfigured: o.onlyConfigured ?? envBool("OPENCODE_QUOTAS_ONLY_CONFIGURED", true),
     usage: usageConfig(o.usage),
-    disabled: o.disabled ?? envBool("PEAKHOURS_DISABLE", false),
+    disabled: o.disabled ?? envBool("OPENCODE_QUOTAS_DISABLE", false),
   }
 }
 
@@ -1652,26 +1652,26 @@ function usageConfig(c?: UsageOptions): ResolvedUsageOptions {
     return v && v.trim() !== "" ? v.trim() : undefined
   }
   const region = (v: UsageRegion | undefined, envName: string): UsageRegion => v ?? (env(envName) === "cn" ? "cn" : "global")
-  const minBalanceEnv = env("PEAKHOURS_MIN_BALANCE")
+  const minBalanceEnv = env("OPENCODE_QUOTAS_MIN_BALANCE")
   const minBalanceNum = minBalanceEnv != null ? Number(minBalanceEnv) : NaN
   return {
-    enabled: o.enabled ?? envBool("PEAKHOURS_USAGE", true),
-    refreshMin: Math.max(1, o.refreshMin ?? envNum("PEAKHOURS_USAGE_REFRESH_MIN", 5)),
-    timeoutSec: Math.max(1, o.timeoutSec ?? envNum("PEAKHOURS_USAGE_TIMEOUT", 8)),
-    alertPct: o.alertPct ?? envNum("PEAKHOURS_USAGE_ALERT_PCT", 80),
+    enabled: o.enabled ?? envBool("OPENCODE_QUOTAS_USAGE", true),
+    refreshMin: Math.max(1, o.refreshMin ?? envNum("OPENCODE_QUOTAS_USAGE_REFRESH_MIN", 5)),
+    timeoutSec: Math.max(1, o.timeoutSec ?? envNum("OPENCODE_QUOTAS_USAGE_TIMEOUT", 8)),
+    alertPct: o.alertPct ?? envNum("OPENCODE_QUOTAS_USAGE_ALERT_PCT", 80),
     minBalance: o.minBalance !== undefined ? o.minBalance : Number.isFinite(minBalanceNum) ? minBalanceNum : null,
     keys: {
-      deepseek: o.keys?.deepseek ?? env("PEAKHOURS_DEEPSEEK_API_KEY"),
-      zai: o.keys?.zai ?? env("PEAKHOURS_ZAI_API_KEY"),
-      kimi: o.keys?.kimi ?? env("PEAKHOURS_KIMI_CODE_API_KEY") ?? env("PEAKHOURS_KIMI_API_KEY"),
-      moonshot: o.keys?.moonshot ?? env("PEAKHOURS_MOONSHOT_API_KEY"),
-      minimax: o.keys?.minimax ?? env("PEAKHOURS_MINIMAX_CODING_API_KEY") ?? env("PEAKHOURS_MINIMAX_API_KEY"),
-      zen: o.keys?.zen ?? env("PEAKHOURS_ZEN_API_KEY") ?? env("OPENCODE_API_KEY"),
+      deepseek: o.keys?.deepseek ?? env("OPENCODE_QUOTAS_DEEPSEEK_API_KEY"),
+      zai: o.keys?.zai ?? env("OPENCODE_QUOTAS_ZAI_API_KEY"),
+      kimi: o.keys?.kimi ?? env("OPENCODE_QUOTAS_KIMI_CODE_API_KEY") ?? env("OPENCODE_QUOTAS_KIMI_API_KEY"),
+      moonshot: o.keys?.moonshot ?? env("OPENCODE_QUOTAS_MOONSHOT_API_KEY"),
+      minimax: o.keys?.minimax ?? env("OPENCODE_QUOTAS_MINIMAX_CODING_API_KEY") ?? env("OPENCODE_QUOTAS_MINIMAX_API_KEY"),
+      zen: o.keys?.zen ?? env("OPENCODE_QUOTAS_ZEN_API_KEY") ?? env("OPENCODE_API_KEY"),
     },
-    zaiRegion: region(o.zaiRegion, "PEAKHOURS_ZAI_REGION"),
-    moonshotRegion: region(o.moonshotRegion, "PEAKHOURS_MOONSHOT_REGION"),
-    minimaxRegion: region(o.minimaxRegion, "PEAKHOURS_MINIMAX_REGION"),
-    authStore: o.authStore ?? envBool("PEAKHOURS_USAGE_AUTH_STORE", true),
+    zaiRegion: region(o.zaiRegion, "OPENCODE_QUOTAS_ZAI_REGION"),
+    moonshotRegion: region(o.moonshotRegion, "OPENCODE_QUOTAS_MOONSHOT_REGION"),
+    minimaxRegion: region(o.minimaxRegion, "OPENCODE_QUOTAS_MINIMAX_REGION"),
+    authStore: o.authStore ?? envBool("OPENCODE_QUOTAS_USAGE_AUTH_STORE", true),
   }
 }
 
@@ -1691,8 +1691,8 @@ async function desktopNotify(
   }
 }
 
-export const PeakHoursPlugin: Plugin = async ({ client, $, directory }, options) => {
-  const opts = mergeOpts(options as PeakHoursOptions | undefined)
+export const OpencodeQuotasPlugin: Plugin = async ({ client, $, directory }, options) => {
+  const opts = mergeOpts(options as OpencodeQuotasOptions | undefined)
   if (opts.disabled) return {}
 
   const providers = [
@@ -1856,7 +1856,7 @@ export const PeakHoursPlugin: Plugin = async ({ client, $, directory }, options)
     try {
       server = await startCompanionServer(opts.port!, visible, opts, usageSnapshots, usageKeyDiags, hiddenIds, auth)
     } catch (err) {
-      console.error("[peakhours] companion server could not start:", err instanceof Error ? err.message : err)
+      console.error("[opencode-quotas] companion server could not start:", err instanceof Error ? err.message : err)
     }
   }
 
@@ -1879,11 +1879,11 @@ export const PeakHoursPlugin: Plugin = async ({ client, $, directory }, options)
       if (!opts.command || !server) return
       config.command = config.command ?? {}
       const curlAuth = auth ? ' -u "${OPENCODE_SERVER_USERNAME:-opencode}:${OPENCODE_SERVER_PASSWORD}"' : ""
-      config.command["peakhours"] = {
+      config.command["quotas"] = {
         template: [
-          "The shell output below is the live model-provider peak-hours status fetched from the peakhours companion server.",
+          "The shell output below is the live model-provider peak-hours status fetched from the opencode-quotas companion server.",
           "Render it for the user EXACTLY as given (keep every provider row and number); do not add, drop or reinterpret rows. If the output says the server is unreachable, just say so.",
-          "!`curl -sf -m 2" + curlAuth + " " + server.url + "/peakhours.txt || echo PEAKHOURS_SERVER_UNREACHABLE`",
+          "!`curl -sf -m 2" + curlAuth + " " + server.url + "/opencode-quotas.txt || echo OPENCODE_QUOTAS_SERVER_UNREACHABLE`",
         ].join("\n"),
         description: "Show model-provider peak/off-peak hours + live quota & balance (status table)",
       }
@@ -1900,14 +1900,14 @@ export const PeakHoursPlugin: Plugin = async ({ client, $, directory }, options)
         lastConnectToast = now
         setTimeout(() => {
           const uSum = usageToastSummary(usageSnapshots())
-          const footer = (server ? `\ncompanion page: ${server.url} · /peakhours for the full table` : "") + (uSum ? `\nquota: ${uSum}` : "")
+          const footer = (server ? `\ncompanion page: ${server.url} · /quotas for the full table` : "") + (uSum ? `\nquota: ${uSum}` : "")
           void toast(toastStatus(visible) + footer, "Provider peak-hours", "info", 15_000)
         }, 800)
         return
       }
 
       if (event.type === "tui.command.execute") {
-        if ((event.properties as { command?: string }).command !== "peakhours") return
+        if ((event.properties as { command?: string }).command !== "quotas") return
         // Instant zero-cost display (the command's template echo comes separately).
         setTimeout(() => {
           void toast(toastStatus(visible) + (server ? `\ncompanion: ${server.url}` : ""), "Provider peak-hours", "info", 20_000)
@@ -1951,8 +1951,8 @@ export const PeakHoursPlugin: Plugin = async ({ client, $, directory }, options)
  */
 export default {
   id: "opencode-quotas",
-  setup: (input: { options?: PeakHoursOptions } & Record<string, unknown>) =>
-    PeakHoursPlugin(input as Parameters<typeof PeakHoursPlugin>[0], input.options),
-  server: (input: Parameters<typeof PeakHoursPlugin>[0], options?: PeakHoursOptions) =>
-    PeakHoursPlugin(input, options),
+  setup: (input: { options?: OpencodeQuotasOptions } & Record<string, unknown>) =>
+    OpencodeQuotasPlugin(input as Parameters<typeof OpencodeQuotasPlugin>[0], input.options),
+  server: (input: Parameters<typeof OpencodeQuotasPlugin>[0], options?: OpencodeQuotasOptions) =>
+    OpencodeQuotasPlugin(input, options),
 }

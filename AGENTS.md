@@ -39,24 +39,24 @@ npx tsc --noEmit --strict --skipLibCheck \
 
 Plugins load at startup; there is no hot reload. To try a change: copy `opencode-quotas.ts`
 to `~/.config/opencode/plugins/` (global) or `<project>/.opencode/plugins/` and restart
-opencode. Verify via the welcome toast, the `/peakhours` command,
+opencode. Verify via the welcome toast, the `/quotas` command,
 `curl http://127.0.0.1:4117/api/status`, or the dashboard (default port 4117; plugin
 takes the next free port if busy). This repo's own `.opencode/` does not load the
 plugin — it only holds gitignored dev deps.
 
 ## Code map (sections of opencode-quotas.ts, in order)
 
-1. Types (`PeakHoursOptions`, `ProviderDef`, ...) and `PROVIDERS` data.
+1. Types (`OpencodeQuotasOptions`, `ProviderDef`, ...) and `PROVIDERS` data.
 2. Time math: tz-aware window evaluation via `Intl` (`zonedParts`, `inPeakAt`,
    `boundaries`) — pure, exported.
 3. Rendering: `toastStatus`, `textTable`, `markdownCard`.
 4. Usage/quota: defensive per-provider parsers, `USAGE_SOURCES` registry,
-   `fetchUsageSnapshot`, key resolution = options → `PEAKHOURS_*` env → OpenCode
+   `fetchUsageSnapshot`, key resolution = options → `OPENCODE_QUOTAS_*` env → OpenCode
    `auth.json` credential store (read-only, cached by mtime) → standard provider env.
 5. Companion server (`startCompanionServer`): Bun.serve with `node:http` fallback;
-   routes `/`, `/api/status`, `/api/usage`, `/peakhours.txt`.
-6. `PeakHoursPlugin` (default export) — entrypoint wiring hooks/timers; the
-   `/peakhours` command is registered via the `config` hook.
+   routes `/`, `/api/status`, `/api/usage`, `/opencode-quotas.txt`.
+6. `OpencodeQuotasPlugin` (default export) — entrypoint wiring hooks/timers; the
+   `/quotas` command is registered via the `config` hook.
 
 ## Gotchas
 
@@ -69,7 +69,7 @@ plugin — it only holds gitignored dev deps.
 ## opencode 1.18.x plugin loader contract (verified 2026-09-17)
 
 - The default export must stay shaped `{ id, setup, server }` (wrapping
-  `PeakHoursPlugin`): the v1 server loader calls `server(input, options)`, the v2
+  `OpencodeQuotasPlugin`): the v1 server loader calls `server(input, options)`, the v2
   loader decodes `{ id, effect | setup }` and **silently drops** anything else
   (`Effect.ignoreCause`) — a wrong shape = plugin never loads, no error.
 - The v1 loader treats **every runtime export** as a plugin factory and aborts with
@@ -78,7 +78,7 @@ plugin — it only holds gitignored dev deps.
   are exported. Functions being exported is fine but unnecessary.
 - A `["path", {options}]` pair in config `plugin` was silently ignored (plugin never
   loaded) on 1.18.30 — install via a plugins directory instead; options then come
-  from `PEAKHOURS_*` env vars only.
+  from `OPENCODE_QUOTAS_*` env vars only.
 - npm plugin specs (`"some-package"` in config) make opencode run an arborist install
   (network) on startup unless `~/.cache/opencode/packages/<pkg>/node_modules/<name>`
   exists; a spec whose install keeps failing slows every startup (the oh-my-openagent
@@ -96,5 +96,5 @@ plugin — it only holds gitignored dev deps.
   the default export's `server(input, options)` reproduces the v1 loader exactly.
 - The dashboard binds `0.0.0.0` by default and mirrors opencode web auth:
   `OPENCODE_SERVER_PASSWORD` (+ `OPENCODE_SERVER_USERNAME`, default `opencode`)
-  enables HTTP Basic auth on all routes; the `/peakhours` curl template injects
+  enables HTTP Basic auth on all routes; the `/quotas` curl template injects
   `-u` from the environment (never the secret itself).

@@ -1,4 +1,4 @@
-# peakhours — provider peak-hours & live quota for OpenCode
+# opencode-quotas — provider peak-hours & live quota for OpenCode
 
 An [OpenCode](https://opencode.ai) plugin that keeps you oriented in model providers'
 **peak / off-peak hours** — discounted API price windows (DeepSeek), subscription-quota
@@ -12,17 +12,22 @@ Zen) and show them next to the peak-hours data, with low-quota and low-balance a
 Single file. Zero runtime dependencies. No build step.
 
 ```
-┌────────────────────────────────────────────────────────────────────────┐
-│ Provider peak-hours                                                    │
-│ DeepSeek API        PEAK     next: off-peak 3h 05m (10:00 local)       │
-│ z.ai GLM Coding     PEAK     next: off-peak 3h 05m · weekends 1x/0.5x   │
-│ Kimi Code           PEAK     next: off-peak 2h 05m (fewer 429s)         │
-│ MiniMax Token Plan  —        no fixed windows (5h rolling quota)        │
-│                                                                        │
-│ Quota & balance (live)                                                 │
-│ Kimi Code weekly 90% used · z.ai 5h 40% · DeepSeek $12.50              │
-└────────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│ Provider peak-hours                                                  │
+│ DeepSeek API    OFF-PEAK   next: PEAK 12h 21m (04:00 local)          │
+│   24h ░▓▓▓░░▓▓▓▓░░▯░░░░░░░░░░░                                       │
+│ z.ai GLM Coding OFF-PEAK   next: PEAK 17h 21m (09:00 local)          │
+│   24h ░░░░░░░░░░░░░░▓▓▓▓░░▯░░░                                       │
+│ Kimi Code       OFF-PEAK   next: PEAK 17h 21m (09:00 local)          │
+│   24h ░░░░░░░░░░░░░░▓▓▓░░░▯░░░                                       │
+│ MiniMax Token   —          no fixed windows (5h rolling quota)       │
+│   24h ░░░░░░░░░░░░░░░░░░░░▯░░░                                       │
+│                                                                      │
+│ quota: z.ai 5h 42% · weekly 11% · Kimi weekly 90% · DeepSeek $12.50  │
+└──────────────────────────────────────────────────────────────────────┘
 ```
+
+![Companion dashboard — light scheme (click for full size)](screenshot.png)
 
 ## Requirements
 
@@ -32,7 +37,7 @@ Single file. Zero runtime dependencies. No build step.
 - Nothing else — the single `opencode-quotas.ts` file has **zero npm dependencies** (its
   imports are type-only imports plus node builtins), so there is no build step and
   no `package.json` needed.
-- Optional: `curl` on your `PATH` (used by the `/peakhours` command's template to
+- Optional: `curl` on your `PATH` (used by the `/quotas` command's template to
   echo the live table), and `osascript` (macOS) or `notify-send` (Linux) if you
   enable desktop notifications.
 
@@ -67,7 +72,7 @@ Any of these confirms a healthy install:
 - **Dashboard** — open `http://127.0.0.1:4117` in a browser (the exact URL is also
   shown in the welcome toast and the session card; if 4117 was busy the plugin
   silently took the next free port).
-- **Command** — type `/peakhours` in the TUI: an instant toast appears and the live
+- **Command** — type `/quotas` in the TUI: an instant toast appears and the live
   status table is echoed into the conversation.
 - **API** — `curl http://127.0.0.1:4117/api/status` returns the JSON status (add `-u "$OPENCODE_SERVER_USERNAME:$OPENCODE_SERVER_PASSWORD"` when authentication is enabled).
 
@@ -99,11 +104,11 @@ Notes:
 - **1.18.30 caveat (verified):** a `["path", {options}]` pair entry can be *silently
   ignored* by the plugin loader — the plugin just never loads, with no error. If the
   plugin does not appear, install it in a plugins directory instead and pass options
-  via `PEAKHOURS_*` environment variables.
+  via `OPENCODE_QUOTAS_*` environment variables.
 - If the file already sits in a plugin directory *and* is listed in `plugin`, it is
   still loaded exactly once — the config entry just supplies the options.
 - A file discovered **only** via a plugin directory never receives an options
-  object; configure it through the `PEAKHOURS_*` environment variables instead.
+  object; configure it through the `OPENCODE_QUOTAS_*` environment variables instead.
 
 ### Uninstall
 
@@ -112,7 +117,7 @@ Delete the file (and/or remove the `plugin` entry). On shutdown the plugin's
 
 ## Usage
 
-### `/peakhours` command
+### `/quotas` command
 
 Registered automatically by the plugin's `config` hook — no `opencode.json` editing
 needed. Running it does two things:
@@ -120,8 +125,50 @@ needed. Running it does two things:
 1. **Instant toast** (zero model cost) with the current peak/off-peak state of every
    tracked provider, the countdown to the next window flip, and the dashboard URL.
 2. **Live status table** echoed into the conversation: the command's template fetches
-   `/peakhours.txt` from the companion server via `curl` and the model renders it
+   `/opencode-quotas.txt` from the companion server via `curl` and the model renders it
    verbatim, including the quota & balance section when keys are configured.
+
+Example of the table the command injects into the conversation (synthetic values):
+
+```text
+Model provider peak-hours — 15:38 local · 12:38 UTC
+---------------------------------------------------
+DeepSeek API  [OFF-PEAK]
+  window : Mon-Fri 01:00-04:00 UTC & Mon-Fri 06:00-10:00 UTC
+  24h    : ░▓▓▓░░▓▓▓▓░░▯░░░░░░░░░░░ (midnight-aligned, UTC)
+  next   : peak starts 04:00 local (01:00 UTC) — in 12h 21m
+  benefit: Off-peak prices are HALF peak rates (e.g. deepseek-flash input $0.15 vs $0.30 per 1M cache-miss tokens).
+  source : https://api-docs.deepseek.com/quick_start/pricing (verified 2026-09-17)
+z.ai GLM Coding Plan  [OFF-PEAK]
+  window : Mon-Fri 14:00-18:00 UTC+8
+  24h    : ░░░░░░░░░░░░░░▓▓▓▓░░▯░░░ (midnight-aligned, Asia/Singapore)
+  next   : peak starts 09:00 local (06:00 UTC) — in 17h 21m
+  benefit: Off-peak: credits burn at 0.5x; GLM-5.3 quota 1x (vs 3x peak); weekends all off-peak.
+  source : https://docs.z.ai/devpack/overview (verified 2026-09-17)
+Kimi Code (Moonshot)  [OFF-PEAK]
+  window : Mon-Fri 14:00-17:00 UTC+8
+  24h    : ░░░░░░░░░░░░░░▓▓▓░░░▯░░░ (midnight-aligned, Asia/Shanghai)
+  next   : peak starts 09:00 local (06:00 UTC) — in 17h 21m
+  benefit: Outside the congestion window, 429s are far less likely.
+  source : https://www.kimi.com/code/docs/en/kimi-code/error-reference.html (verified 2026-09-17)
+MiniMax Token Plan  [—]
+  window : no fixed peak hours published
+  24h    : ░░░░░░░░░░░░░░░░░░░░▯░░░ (midnight-aligned, Asia/Shanghai)
+  next   : -
+  benefit: Quota runs on 5-hour rolling + weekly windows.
+  source : https://platform.minimax.io/docs/token-plan/faq (verified 2026-09-17)
+
+Quota & balance (live from provider account APIs)
+--------------------------------------------
+  DeepSeek API
+    PAYG balance: USD 12.50
+  z.ai GLM Coding Plan — GLM Coding Pro
+    5h prompt tokens: 42% used · resets in 2h 24m
+    weekly credit windows: 11% used · resets in 2d 3h
+  Kimi Code
+    weekly request pool: 90% used · resets in 38h
+    5h rate-limit window: 23% used · resets in 1h 06m
+```
 
 ### Toasts
 
@@ -141,7 +188,7 @@ Every new **top-level** session gets a markdown status card posted as a *no-repl
 synthetic message* (`noReply: true`, `synthetic` + `ignored` parts). It renders in
 both the TUI and the web UI and costs **zero model tokens** — it is never sent to
 the model. Child/subagent sessions are skipped. Disable with
-`cardOnSessionStart: false` / `PEAKHOURS_SESSION_CARD=0`.
+`cardOnSessionStart: false` / `OPENCODE_QUOTAS_SESSION_CARD=0`.
 
 ### Companion dashboard
 
@@ -153,12 +200,14 @@ red ≥ 85 %). A scheme toggle (`◐ auto / ☀ light / ☾ dark`) follows your 
 scheme by default and remembers the choice; the text table, toasts, and session cards
 show a matching 24-slot sparkline (`▓` peak / `░` off-peak / `▮` now).
 
+![Companion dashboard — light scheme, provider cards with 24h peak bars and the quota & balance section](screenshot.png)
+
 | Route | Description |
 |---|---|
 | `/` | Live dashboard (auto-refresh 30 s) |
 | `/api/status` | JSON: provider states, windows, day-bar segments, countdowns, clocks, usage snapshot |
 | `/api/usage` | JSON: raw per-source quota/balance snapshots |
-| `/peakhours.txt` | Plain-text table — what the `/peakhours` command injects |
+| `/opencode-quotas.txt` | Plain-text table — what the `/quotas` command injects |
 
 ### Authentication
 
@@ -166,11 +215,11 @@ By default the dashboard binds `0.0.0.0` (reachable from your LAN) and **mirrors
 opencode web's own protection**: if `OPENCODE_SERVER_PASSWORD` is set, every dashboard
 route requires HTTP Basic auth with `OPENCODE_SERVER_USERNAME` (default `opencode`) —
 the same credentials as opencode web itself, so the browser prompts once and the
-`/peakhours` command's `curl` picks the credentials up from the environment
+`/quotas` command's `curl` picks the credentials up from the environment
 automatically. Without a password the server stays open; the plugin then logs a
 one-time warning, disables cross-origin access (`Access-Control-Allow-Origin: *` is
 only sent on loopback binds), and shows the LAN URL it is reachable on. Set
-`PEAKHOURS_HOSTNAME=127.0.0.1` to restrict the dashboard to localhost.
+`OPENCODE_QUOTAS_HOSTNAME=127.0.0.1` to restrict the dashboard to localhost.
 
 ## Quota / balance / spend polling
 
@@ -205,7 +254,7 @@ opencode auth login          # pick e.g. "DeepSeek", "Z.AI Coding Plan", "Kimi F
 Resolution order per source — first hit wins:
 
 1. `usage.keys.*` in the plugin options
-2. `PEAKHOURS_<SOURCE>_API_KEY` environment variables
+2. `OPENCODE_QUOTAS_<SOURCE>_API_KEY` environment variables
 3. **OpenCode's credential store** — `auth.json` in the opencode data dir
    (`$XDG_DATA_HOME/opencode/auth.json` or `~/.local/share/opencode/auth.json`;
    `OPENCODE_AUTH_CONTENT` is honored too, mirroring opencode's own behavior)
@@ -221,8 +270,8 @@ Notes:
 - Keys are never logged or rendered. Diagnostics (`GET /api/usage` → `keys[]`, the
   dashboard cards) show only the origin — `opencode auth`, `env NAME`, `options` —
   plus the **last 4 characters** of the key.
-- Opt out with `usage.authStore: false` / `PEAKHOURS_USAGE_AUTH_STORE=0` — then only
-  options + `PEAKHOURS_*` env vars are used.
+- Opt out with `usage.authStore: false` / `OPENCODE_QUOTAS_USAGE_AUTH_STORE=0` — then only
+  options + `OPENCODE_QUOTAS_*` env vars are used.
 
 ### Where to get each key
 
@@ -231,19 +280,19 @@ above) — the table below is for explicit or standalone setup.
 
 | Provider | Key source | Env var | What you get |
 |---|---|---|---|
-| **DeepSeek API** | [platform.deepseek.com](https://platform.deepseek.com) → API keys | `PEAKHOURS_DEEPSEEK_API_KEY` | `GET api.deepseek.com/user/balance`: availability + per-currency `total / granted / topped_up` balance |
-| **z.ai GLM Coding Plan** | z.ai open-platform console (global) or [bigmodel.cn](https://open.bigmodel.cn) (CN) | `PEAKHOURS_ZAI_API_KEY` | `GET api.z.ai/api/monitor/usage/quota/limit`: plan name + `limits[]` — 5-hour token/credit window, weekly, MCP window: percent used, remaining, next reset |
-| **Kimi Code** (subscription) | [kimi.com/code/console](https://www.kimi.com/code/console) | `PEAKHOURS_KIMI_CODE_API_KEY` | `GET api.kimi.com/coding/v1/usages`: weekly request pool + 5-hour rate-limit windows with reset times |
-| **Moonshot Open Platform** (PAYG) | [platform.moonshot.ai](https://platform.moonshot.ai) (global) or [platform.moonshot.cn](https://platform.moonshot.cn) (CN) | `PEAKHOURS_MOONSHOT_API_KEY` | `GET .../v1/users/me/balance`: `available / voucher / cash` balance (USD / CNY) |
-| **MiniMax Token Plan** | [platform.minimax.io](https://platform.minimax.io) (global) or [platform.minimaxi.com](https://platform.minimaxi.com) (CN) | `PEAKHOURS_MINIMAX_API_KEY` (alias `PEAKHOURS_MINIMAX_CODING_API_KEY`) | `GET .../v1/token_plan/remains` (fallback `.../v1/api/openplatform/coding_plan/remains`): per-model 5-hour + weekly remaining quota, boost multiplier, reset times |
-| **OpenCode Zen** | [opencode.ai/zen](https://opencode.ai/zen) — or reuse the key OpenCode already stores | `PEAKHOURS_ZEN_API_KEY` (falls back to `OPENCODE_API_KEY`) | `GET opencode.ai/zen/go/v1/usage`: rolling 5-hour / weekly / monthly usage percent + reset |
+| **DeepSeek API** | [platform.deepseek.com](https://platform.deepseek.com) → API keys | `OPENCODE_QUOTAS_DEEPSEEK_API_KEY` | `GET api.deepseek.com/user/balance`: availability + per-currency `total / granted / topped_up` balance |
+| **z.ai GLM Coding Plan** | z.ai open-platform console (global) or [bigmodel.cn](https://open.bigmodel.cn) (CN) | `OPENCODE_QUOTAS_ZAI_API_KEY` | `GET api.z.ai/api/monitor/usage/quota/limit`: plan name + `limits[]` — 5-hour token/credit window, weekly, MCP window: percent used, remaining, next reset |
+| **Kimi Code** (subscription) | [kimi.com/code/console](https://www.kimi.com/code/console) | `OPENCODE_QUOTAS_KIMI_CODE_API_KEY` | `GET api.kimi.com/coding/v1/usages`: weekly request pool + 5-hour rate-limit windows with reset times |
+| **Moonshot Open Platform** (PAYG) | [platform.moonshot.ai](https://platform.moonshot.ai) (global) or [platform.moonshot.cn](https://platform.moonshot.cn) (CN) | `OPENCODE_QUOTAS_MOONSHOT_API_KEY` | `GET .../v1/users/me/balance`: `available / voucher / cash` balance (USD / CNY) |
+| **MiniMax Token Plan** | [platform.minimax.io](https://platform.minimax.io) (global) or [platform.minimaxi.com](https://platform.minimaxi.com) (CN) | `OPENCODE_QUOTAS_MINIMAX_API_KEY` (alias `OPENCODE_QUOTAS_MINIMAX_CODING_API_KEY`) | `GET .../v1/token_plan/remains` (fallback `.../v1/api/openplatform/coding_plan/remains`): per-model 5-hour + weekly remaining quota, boost multiplier, reset times |
+| **OpenCode Zen** | [opencode.ai/zen](https://opencode.ai/zen) — or reuse the key OpenCode already stores | `OPENCODE_QUOTAS_ZEN_API_KEY` (falls back to `OPENCODE_API_KEY`) | `GET opencode.ai/zen/go/v1/usage`: rolling 5-hour / weekly / monthly usage percent + reset |
 
 Set a key either as an environment variable or under `usage.keys.*`:
 
 ```bash
 # e.g. in your shell profile
-export PEAKHOURS_ZAI_API_KEY="..."
-export PEAKHOURS_DEEPSEEK_API_KEY="..."
+export OPENCODE_QUOTAS_ZAI_API_KEY="..."
+export OPENCODE_QUOTAS_DEEPSEEK_API_KEY="..."
 ```
 
 ```jsonc
@@ -261,16 +310,16 @@ export PEAKHOURS_DEEPSEEK_API_KEY="..."
 
 | Option | Env var | Default | Meaning |
 |---|---|---|---|
-| `usage.enabled` | `PEAKHOURS_USAGE` | `true` | Poll provider usage APIs (inert without keys). |
-| `usage.refreshMin` | `PEAKHOURS_USAGE_REFRESH_MIN` | `5` | Refresh interval in minutes (min 1; first poll runs ~1.5 s after startup). |
-| `usage.timeoutSec` | `PEAKHOURS_USAGE_TIMEOUT` | `8` | Per-request timeout. |
-| `usage.alertPct` | `PEAKHOURS_USAGE_ALERT_PCT` | `80` | `warning` toast when a window is ≥ this % used; `0` disables. |
-| `usage.minBalance` | `PEAKHOURS_MIN_BALANCE` | off | `error` toast when a PAYG balance falls to/below this value. |
+| `usage.enabled` | `OPENCODE_QUOTAS_USAGE` | `true` | Poll provider usage APIs (inert without keys). |
+| `usage.refreshMin` | `OPENCODE_QUOTAS_USAGE_REFRESH_MIN` | `5` | Refresh interval in minutes (min 1; first poll runs ~1.5 s after startup). |
+| `usage.timeoutSec` | `OPENCODE_QUOTAS_USAGE_TIMEOUT` | `8` | Per-request timeout. |
+| `usage.alertPct` | `OPENCODE_QUOTAS_USAGE_ALERT_PCT` | `80` | `warning` toast when a window is ≥ this % used; `0` disables. |
+| `usage.minBalance` | `OPENCODE_QUOTAS_MIN_BALANCE` | off | `error` toast when a PAYG balance falls to/below this value. |
 | `usage.keys.*` | per-source env vars above | — | Key ids: `deepseek`, `zai`, `kimi`, `moonshot`, `minimax`, `zen`. |
-| `usage.zaiRegion` | `PEAKHOURS_ZAI_REGION` | `global` | `global` (api.z.ai) or `cn` (open.bigmodel.cn). |
-| `usage.moonshotRegion` | `PEAKHOURS_MOONSHOT_REGION` | `global` | `global` (api.moonshot.ai) or `cn` (api.moonshot.cn, CNY). |
-| `usage.minimaxRegion` | `PEAKHOURS_MINIMAX_REGION` | `global` | `global` (api.minimax.io) or `cn` (api.minimaxi.com). |
-| `usage.authStore` | `PEAKHOURS_USAGE_AUTH_STORE` | `true` | Also resolve keys from OpenCode's credential store (`auth.json` / `OPENCODE_AUTH_CONTENT`) and standard provider env names. |
+| `usage.zaiRegion` | `OPENCODE_QUOTAS_ZAI_REGION` | `global` | `global` (api.z.ai) or `cn` (open.bigmodel.cn). |
+| `usage.moonshotRegion` | `OPENCODE_QUOTAS_MOONSHOT_REGION` | `global` | `global` (api.moonshot.ai) or `cn` (api.moonshot.cn, CNY). |
+| `usage.minimaxRegion` | `OPENCODE_QUOTAS_MINIMAX_REGION` | `global` | `global` (api.minimax.io) or `cn` (api.minimaxi.com). |
+| `usage.authStore` | `OPENCODE_QUOTAS_USAGE_AUTH_STORE` | `true` | Also resolve keys from OpenCode's credential store (`auth.json` / `OPENCODE_AUTH_CONTENT`) and standard provider env names. |
 
 **Security:** keys are used read-only, never logged, and are only ever sent over
 HTTPS to the provider they belong to. Keys taken from OpenCode's auth store are
@@ -297,18 +346,18 @@ Options object (config `plugin` entry) wins over environment variables.
 
 | Option | Env var | Default | Meaning |
 |---|---|---|---|
-| `port` | `PEAKHOURS_PORT` | `4117` | Companion server port; `0` disables it. If busy, the next 9 ports are tried. |
-| `hostname` | `PEAKHOURS_HOSTNAME` | `0.0.0.0` | Companion server bind address. Use `127.0.0.1` for loopback-only access (see *Authentication* below). |
-| `leadMinutes` | `PEAKHOURS_LEAD_MINUTES` | `15` | Lead-time alert before a window flips; `0` disables alerts. |
-| `toastOnConnect` | `PEAKHOURS_TOAST_ON_CONNECT` | `true` | Compact status toast when a client attaches. |
-| `cardOnSessionStart` | `PEAKHOURS_SESSION_CARD` | `true` | Post the markdown card into new top-level sessions (child/subagent sessions are skipped). |
-| `command` | `PEAKHOURS_COMMAND` | `true` | Register the `/peakhours` command. |
-| `notify` | `PEAKHOURS_NOTIFY` | `false` | Also fire desktop notifications on transitions (`osascript` / `notify-send`). |
-| `providers` | `PEAKHOURS_PROVIDERS` | all | Comma-separated id filter, e.g. `deepseek,zai`. |
+| `port` | `OPENCODE_QUOTAS_PORT` | `4117` | Companion server port; `0` disables it. If busy, the next 9 ports are tried. |
+| `hostname` | `OPENCODE_QUOTAS_HOSTNAME` | `0.0.0.0` | Companion server bind address. Use `127.0.0.1` for loopback-only access (see *Authentication* below). |
+| `leadMinutes` | `OPENCODE_QUOTAS_LEAD_MINUTES` | `15` | Lead-time alert before a window flips; `0` disables alerts. |
+| `toastOnConnect` | `OPENCODE_QUOTAS_TOAST_ON_CONNECT` | `true` | Compact status toast when a client attaches. |
+| `cardOnSessionStart` | `OPENCODE_QUOTAS_SESSION_CARD` | `true` | Post the markdown card into new top-level sessions (child/subagent sessions are skipped). |
+| `command` | `OPENCODE_QUOTAS_COMMAND` | `true` | Register the `/quotas` command. |
+| `notify` | `OPENCODE_QUOTAS_NOTIFY` | `false` | Also fire desktop notifications on transitions (`osascript` / `notify-send`). |
+| `providers` | `OPENCODE_QUOTAS_PROVIDERS` | all | Comma-separated id filter, e.g. `deepseek,zai`. |
 | `custom` | — | — | Array of extra `ProviderDef`s (see below). Always shown regardless of `onlyConfigured`. |
-| `onlyConfigured` | `PEAKHOURS_ONLY_CONFIGURED` | `true` | Show only providers whose usage source has a resolved API key (keys are re-checked every refresh, so the list follows `opencode auth login` live). With no keys at all, displays show a hint instead of an empty table. |
-| `usage` | `PEAKHOURS_USAGE*` | — | See *Polling options* above. |
-| `disabled` | `PEAKHOURS_DISABLE` | `false` | Kill switch — disables everything. |
+| `onlyConfigured` | `OPENCODE_QUOTAS_ONLY_CONFIGURED` | `true` | Show only providers whose usage source has a resolved API key (keys are re-checked every refresh, so the list follows `opencode auth login` live). With no keys at all, displays show a hint instead of an empty table. |
+| `usage` | `OPENCODE_QUOTAS_USAGE*` | — | See *Polling options* above. |
+| `disabled` | `OPENCODE_QUOTAS_DISABLE` | `false` | Kill switch — disables everything. |
 
 Boolean env vars accept `1/true/on/yes` vs `0/false/off/no`.
 
@@ -355,10 +404,10 @@ Peak windows are stored in the provider's own timezone and converted with `Intl`
 |---|---|
 | No toasts at all | Toasts only work while a TUI client is attached (`/tui/show-toast` exists only then). In web-only/headless mode use the session card or dashboard instead. |
 | Welcome toast shows a different port | Port 4117 was busy; the plugin tried the next 9 ports. The actual URL is in the toast and session card. |
-| `/peakhours` shows `PEAKHOURS_SERVER_UNREACHABLE` | The companion server is disabled (`port: 0`), stopped, or `curl` is missing / slower than the 2 s template timeout. With authentication enabled, the shell that runs the command must also have `OPENCODE_SERVER_PASSWORD` / `OPENCODE_SERVER_USERNAME` exported (the template reads them from the environment). |
+| `/quotas` shows `OPENCODE_QUOTAS_SERVER_UNREACHABLE` | The companion server is disabled (`port: 0`), stopped, or `curl` is missing / slower than the 2 s template timeout. With authentication enabled, the shell that runs the command must also have `OPENCODE_SERVER_PASSWORD` / `OPENCODE_SERVER_USERNAME` exported (the template reads them from the environment). |
 | Dashboard asks for username/password | `OPENCODE_SERVER_PASSWORD` is set — the dashboard shares opencode web's Basic auth. Use `OPENCODE_SERVER_USERNAME` (default `opencode`) and that password. |
-| No providers shown (only a hint line) | `onlyConfigured` is on and no provider has a resolved API key — run `opencode auth login` or set a `PEAKHOURS_<PROVIDER>_API_KEY`, or set `onlyConfigured: false`. |
-| Quota & balance section is missing | No API key found in options, env, or OpenCode's auth store — the polling stays inert by design. Run `opencode auth login` or set a `PEAKHOURS_*` var. |
+| No providers shown (only a hint line) | `onlyConfigured` is on and no provider has a resolved API key — run `opencode auth login` or set a `OPENCODE_QUOTAS_<PROVIDER>_API_KEY`, or set `onlyConfigured: false`. |
+| Quota & balance section is missing | No API key found in options, env, or OpenCode's auth store — the polling stays inert by design. Run `opencode auth login` or set a `OPENCODE_QUOTAS_*` var. |
 | Key added via `opencode auth login` is not picked up | The store id does not map to a source (see the mapping table above), `usage.authStore` is off, or `OPENCODE_AUTH_CONTENT` is overriding the file (opencode honors that env var too). Check `GET /api/usage` → `keys[]` to see what the plugin resolved. |
 | A provider shows an error or stale data | Wrong key or wrong region (`global` vs `cn`). The last good snapshot is kept and the error is surfaced on the dashboard. |
 | No card in a session | It was a child/subagent session (skipped by design), or `cardOnSessionStart` is off. |
@@ -382,15 +431,32 @@ Peak windows are stored in the provider's own timezone and converted with `Intl`
   appends a message to a session **without triggering a model reply** — the key to a
   zero-cost in-app card that renders in both TUI and web UI.
 - Custom commands normally send their template to the model; `` !`shell` `` injection
-  inside the template fetches `/peakhours.txt` from the companion server so the table
+  inside the template fetches `/opencode-quotas.txt` from the companion server so the table
   is always live. The instant toast (via the `tui.command.execute` event) gives the
   same data with no model round-trip.
 - Quota polling calls each provider's own account endpoints with an `AbortController`
   timeout, 401/403 fast-fail, and a MiniMax two-endpoint fallback; responses are run
   through defensive parsers (s/ms/µs epochs, ISO timestamps, stringified numbers).
-  Keys resolve per source from plugin options → `PEAKHOURS_*` env → OpenCode's own
+  Keys resolve per source from plugin options → `OPENCODE_QUOTAS_*` env → OpenCode's own
   credential store (`auth.json`, written by `opencode auth login`; cached by mtime
   so logins/rotations are picked up live) → standard provider env names.
+
+## Upgrading from peakhours
+
+Before v0.2 the plugin was distributed as `peakhours.ts` and used the
+`PEAKHOURS_*` namespace. The rename to `opencode-quotas` changed runtime
+identifiers — if you upgrade from the old name:
+
+- the `/peakhours` command is now `/quotas`;
+- every `PEAKHOURS_*` environment variable must be re-exported with the new
+  prefix (e.g. `PEAKHOURS_ZAI_API_KEY` → `OPENCODE_QUOTAS_ZAI_API_KEY`,
+  `PEAKHOURS_PORT` → `OPENCODE_QUOTAS_PORT`; same suffixes);
+- the plain-text route is now `/opencode-quotas.txt` (old `/peakhours.txt` is
+  gone) and the unreachable sentinel is `OPENCODE_QUOTAS_SERVER_UNREACHABLE`;
+- the dashboard theme choice starts fresh (the localStorage key changed).
+
+Delete any old `peakhours.ts` from your plugins directories so the two versions
+do not load side by side.
 
 ## Files
 
