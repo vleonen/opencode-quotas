@@ -69,7 +69,7 @@ Any of these confirms a healthy install:
   silently took the next free port).
 - **Command** — type `/peakhours` in the TUI: an instant toast appears and the live
   status table is echoed into the conversation.
-- **API** — `curl http://127.0.0.1:4117/api/status` returns the JSON status.
+- **API** — `curl http://127.0.0.1:4117/api/status` returns the JSON status (add `-u "$OPENCODE_SERVER_USERNAME:$OPENCODE_SERVER_PASSWORD"` when authentication is enabled).
 
 ### Install with options (opencode.json)
 
@@ -145,16 +145,32 @@ the model. Child/subagent sessions are skipped. Disable with
 
 ### Companion dashboard
 
-A tiny localhost server (Bun.serve with a `node:http` fallback) serves a dark-theme,
-auto-refreshing dashboard with window and quota progress bars, reset countdowns,
-local + UTC clocks, and color-coded usage (green < 60 %, amber < 85 %, red ≥ 85 %).
+A tiny status server (Bun.serve with a `node:http` fallback) serves a dark/light,
+auto-refreshing dashboard — each provider card has a **24-hour peak bar** (amber peak
+segments, current-time marker, provider-tz clock) plus window and quota progress bars,
+reset countdowns, local + UTC clocks, and color-coded usage (green < 60 %, amber < 85 %,
+red ≥ 85 %). A scheme toggle (`◐ auto / ☀ light / ☾ dark`) follows your OS/browser
+scheme by default and remembers the choice; the text table, toasts, and session cards
+show a matching 24-slot sparkline (`▓` peak / `░` off-peak / `▮` now).
 
 | Route | Description |
 |---|---|
 | `/` | Live dashboard (auto-refresh 30 s) |
-| `/api/status` | JSON: provider states, windows, countdowns, clocks, usage snapshot |
+| `/api/status` | JSON: provider states, windows, day-bar segments, countdowns, clocks, usage snapshot |
 | `/api/usage` | JSON: raw per-source quota/balance snapshots |
 | `/peakhours.txt` | Plain-text table — what the `/peakhours` command injects |
+
+### Authentication
+
+By default the dashboard binds `0.0.0.0` (reachable from your LAN) and **mirrors
+opencode web's own protection**: if `OPENCODE_SERVER_PASSWORD` is set, every dashboard
+route requires HTTP Basic auth with `OPENCODE_SERVER_USERNAME` (default `opencode`) —
+the same credentials as opencode web itself, so the browser prompts once and the
+`/peakhours` command's `curl` picks the credentials up from the environment
+automatically. Without a password the server stays open; the plugin then logs a
+one-time warning, disables cross-origin access (`Access-Control-Allow-Origin: *` is
+only sent on loopback binds), and shows the LAN URL it is reachable on. Set
+`PEAKHOURS_HOSTNAME=127.0.0.1` to restrict the dashboard to localhost.
 
 ## Quota / balance / spend polling
 
@@ -282,13 +298,15 @@ Options object (config `plugin` entry) wins over environment variables.
 | Option | Env var | Default | Meaning |
 |---|---|---|---|
 | `port` | `PEAKHOURS_PORT` | `4117` | Companion server port; `0` disables it. If busy, the next 9 ports are tried. |
+| `hostname` | `PEAKHOURS_HOSTNAME` | `0.0.0.0` | Companion server bind address. Use `127.0.0.1` for loopback-only access (see *Authentication* below). |
 | `leadMinutes` | `PEAKHOURS_LEAD_MINUTES` | `15` | Lead-time alert before a window flips; `0` disables alerts. |
 | `toastOnConnect` | `PEAKHOURS_TOAST_ON_CONNECT` | `true` | Compact status toast when a client attaches. |
 | `cardOnSessionStart` | `PEAKHOURS_SESSION_CARD` | `true` | Post the markdown card into new top-level sessions (child/subagent sessions are skipped). |
 | `command` | `PEAKHOURS_COMMAND` | `true` | Register the `/peakhours` command. |
 | `notify` | `PEAKHOURS_NOTIFY` | `false` | Also fire desktop notifications on transitions (`osascript` / `notify-send`). |
 | `providers` | `PEAKHOURS_PROVIDERS` | all | Comma-separated id filter, e.g. `deepseek,zai`. |
-| `custom` | — | — | Array of extra `ProviderDef`s (see below). |
+| `custom` | — | — | Array of extra `ProviderDef`s (see below). Always shown regardless of `onlyConfigured`. |
+| `onlyConfigured` | `PEAKHOURS_ONLY_CONFIGURED` | `true` | Show only providers whose usage source has a resolved API key (keys are re-checked every refresh, so the list follows `opencode auth login` live). With no keys at all, displays show a hint instead of an empty table. |
 | `usage` | `PEAKHOURS_USAGE*` | — | See *Polling options* above. |
 | `disabled` | `PEAKHOURS_DISABLE` | `false` | Kill switch — disables everything. |
 
@@ -337,7 +355,9 @@ Peak windows are stored in the provider's own timezone and converted with `Intl`
 |---|---|
 | No toasts at all | Toasts only work while a TUI client is attached (`/tui/show-toast` exists only then). In web-only/headless mode use the session card or dashboard instead. |
 | Welcome toast shows a different port | Port 4117 was busy; the plugin tried the next 9 ports. The actual URL is in the toast and session card. |
-| `/peakhours` shows `PEAKHOURS_SERVER_UNREACHABLE` | The companion server is disabled (`port: 0`), stopped, or `curl` is missing / slower than the 2 s template timeout. |
+| `/peakhours` shows `PEAKHOURS_SERVER_UNREACHABLE` | The companion server is disabled (`port: 0`), stopped, or `curl` is missing / slower than the 2 s template timeout. With authentication enabled, the shell that runs the command must also have `OPENCODE_SERVER_PASSWORD` / `OPENCODE_SERVER_USERNAME` exported (the template reads them from the environment). |
+| Dashboard asks for username/password | `OPENCODE_SERVER_PASSWORD` is set — the dashboard shares opencode web's Basic auth. Use `OPENCODE_SERVER_USERNAME` (default `opencode`) and that password. |
+| No providers shown (only a hint line) | `onlyConfigured` is on and no provider has a resolved API key — run `opencode auth login` or set a `PEAKHOURS_<PROVIDER>_API_KEY`, or set `onlyConfigured: false`. |
 | Quota & balance section is missing | No API key found in options, env, or OpenCode's auth store — the polling stays inert by design. Run `opencode auth login` or set a `PEAKHOURS_*` var. |
 | Key added via `opencode auth login` is not picked up | The store id does not map to a source (see the mapping table above), `usage.authStore` is off, or `OPENCODE_AUTH_CONTENT` is overriding the file (opencode honors that env var too). Check `GET /api/usage` → `keys[]` to see what the plugin resolved. |
 | A provider shows an error or stale data | Wrong key or wrong region (`global` vs `cn`). The last good snapshot is kept and the error is surfaced on the dashboard. |

@@ -72,6 +72,8 @@ export type ProviderDef = {
 export type PeakHoursOptions = {
   /** Companion server port. 0 disables the server. Default 4117 (env PEAKHOURS_PORT). */
   port?: number
+  /** Companion server bind address. Default "0.0.0.0" (env PEAKHOURS_HOSTNAME); use 127.0.0.1 for loopback only. */
+  hostname?: string
   /** Warn N minutes before a window flips; 0 disables alerts. Default 15 (env PEAKHOURS_LEAD_MINUTES). */
   leadMinutes?: number
   /** Show a compact status toast when a TUI/web client connects. Default true (env PEAKHOURS_TOAST_ON_CONNECT). */
@@ -84,8 +86,10 @@ export type PeakHoursOptions = {
   notify?: boolean
   /** Only track these provider ids. Default: all built-ins (env PEAKHOURS_PROVIDERS=deepseek,zai). */
   providers?: string[]
-  /** Extra user-defined providers appended to the registry. */
+  /** Extra user-defined providers appended to the registry. Always shown regardless of onlyConfigured. */
   custom?: ProviderDef[]
+  /** Show only providers whose usage source has a resolved API key. Default true (env PEAKHOURS_ONLY_CONFIGURED). */
+  onlyConfigured?: boolean
   /** Live quota / balance / spend polling (see UsageOptions). */
   usage?: UsageOptions
   /** Disable everything. Default false (env PEAKHOURS_DISABLE). */
@@ -242,6 +246,42 @@ export function inPeakAt(pv: ProviderDef, date: Date): boolean {
 
 export type Boundary = { at: number; toPeak: boolean }
 
+/** Peak segments (minutes-of-day, provider tz) covering "today", plus the current minute. */
+export type DaySegments = { segments: Array<[number, number]>; nowMin: number; nowLabel: string }
+
+/** Today's peak segments in the provider tz — windows clipped to [0,1440), midnight wraps split. */
+export function daySegments(pv: ProviderDef, now: number = Date.now()): DaySegments {
+  const p = zonedParts(new Date(now), pv.tz)
+  const segments: Array<[number, number]> = []
+  for (const w of pv.peakWindows) {
+    const s = toMin(w.start)
+    const e = toMin(w.end)
+    if (e > s) {
+      if (w.days.includes(p.weekday)) segments.push([s, e])
+    } else {
+      if (w.days.includes(p.weekday)) segments.push([s, 1440])
+      const prevDay = (p.weekday + 6) % 7
+      if (w.days.includes(prevDay) && e > 0) segments.push([0, e])
+    }
+  }
+  segments.sort((a, b) => a[0] - b[0])
+  return { segments, nowMin: p.minutes, nowLabel: fmtClock(now, pv.tz) }
+}
+
+/** 24-char midnight-aligned sparkline for the provider tz: ▓ peak hour, ░ off-peak, ▮/▯ = now. */
+export function sparkline24(pv: ProviderDef, now: number = Date.now()): string {
+  const { segments, nowMin } = daySegments(pv, now)
+  const cells: string[] = []
+  for (let h = 0; h < 24; h++) {
+    const mid = h * 60 + 30
+    cells.push(segments.some(([s, e]) => mid >= s && mid < e) ? "▓" : "░")
+  }
+  const nowIdx = Math.min(23, Math.floor(nowMin / 60))
+  const inPeak = segments.some(([s, e]) => nowMin >= s && nowMin < e)
+  cells[nowIdx] = inPeak ? "▮" : "▯"
+  return cells.join("")
+}
+
 /** All peak start/end boundaries around `now` (-2 .. +8 days), sorted by epoch. */
 export function boundaries(pv: ProviderDef, now: number): Boundary[] {
   if (!pv.peakWindows.length) return []
@@ -397,17 +437,24 @@ function nowTag(e: Enriched): string {
   return e.state === "none" ? "—" : STATE_TAG[e.state]
 }
 
+/** Shown when strict key filtering (onlyConfigured) leaves nothing to display. */
+const EMPTY_PROVIDERS_HINT =
+  "no providers shown — onlyConfigured is on and no provider has a configured API key. " +
+  "Run 'opencode auth login <provider>' or set PEAKHOURS_<PROVIDER>_API_KEY, " +
+  "or set option onlyConfigured: false to always show every provider."
+
 /** One line per provider, e.g. "DeepSeek API  PEAK · off-peak in 1h 55m". */
 function providerLine(e: Enriched): string {
   const name = e.pv.name.padEnd(22)
   const next = e.untilLabel
     ? `next: ${e.status.toPeak ? "PEAK" : "off-peak"} ${e.countdown} (${fmtClock(e.status.until!)} local)`
     : "no transitions"
-  return `${name} ${nowTag(e).padEnd(16)} ${next}`
+  return `${name} ${nowTag(e).padEnd(16)} ${next}\n  24h ${sparkline24(e.pv)}`
 }
 
 /** Compact multi-line status used for toasts. */
 export function toastStatus(providers: ProviderDef[], now: number = Date.now()): string {
+  if (!providers.length) return EMPTY_PROVIDERS_HINT
   return enrich(providers, now)
     .map(providerLine)
     .join("\n")
@@ -415,12 +462,13 @@ export function toastStatus(providers: ProviderDef[], now: number = Date.now()):
 
 /** Plain-text table for the companion server (/peakhours.txt) and the /peakhours command. */
 export function textTable(providers: ProviderDef[], now: number = Date.now(), usage: UsageSnapshot[] = []): string {
-  const es = enrich(providers, now)
   const head = `Model provider peak-hours — ${fmtClock(now)} local · ${fmtClock(now, "UTC")} UTC`
+  if (!providers.length) return `${head}\n${"".padEnd(head.length, "-")}\n${EMPTY_PROVIDERS_HINT}\n`
+  const es = enrich(providers, now)
   const rows = es.map((e) => {
     const win = e.windows.length ? e.windows.join(" & ") : "no fixed peak hours published"
     const next = e.untilLabel ?? "-"
-    return `${e.pv.name}  [${nowTag(e)}]\n  window : ${win}\n  next   : ${next}\n  benefit: ${e.pv.benefit}\n  source : ${e.pv.source} (verified ${e.pv.checked})`
+    return `${e.pv.name}  [${nowTag(e)}]\n  window : ${win}\n  24h    : ${sparkline24(e.pv)} (midnight-aligned, ${e.pv.tz})\n  next   : ${next}\n  benefit: ${e.pv.benefit}\n  source : ${e.pv.source} (verified ${e.pv.checked})`
   })
   const parts = [head, "".padEnd(head.length, "-"), ...rows]
   if (usage.length) {
@@ -437,17 +485,18 @@ export function textTable(providers: ProviderDef[], now: number = Date.now(), us
 
 /** Markdown status card posted into new sessions; renders in TUI and web UI. */
 export function markdownCard(providers: ProviderDef[], now: number = Date.now(), usage: UsageSnapshot[] = []): string {
-  const es = enrich(providers, now)
   const head = `**Provider peak-hours** — ${fmtClock(now)} local · ${fmtClock(now, "UTC")} UTC`
+  const usageMd = usageMarkdown(usage, now)
+  if (!providers.length) return [head, "", `_${EMPTY_PROVIDERS_HINT}_`, "", ...(usageMd ? [usageMd, ""] : [])].join("\n")
+  const es = enrich(providers, now)
   const rows = es.map((e) => {
     const name = `**${e.pv.name}**`
     const win = e.windows.length ? e.windows.join(" & ") : "no fixed windows"
     const next = e.untilLabel ?? "-"
     const ben = e.pv.benefit + (e.pv.note ? ` _(${e.pv.note})_` : "")
-    return `| ${name} | ${nowTag(e)} | ${win} | ${next} | ${ben} |`
+    return `| ${name} | ${nowTag(e)} | ${win} <br>\`${sparkline24(e.pv)}\` | ${next} | ${ben} |`
   })
   const sources = [...new Set(es.map((e) => e.pv.source))].join(", ")
-  const usageMd = usageMarkdown(usage, now)
   return [
     head,
     "",
@@ -1229,6 +1278,7 @@ export function statusPayload(
   now: number = Date.now(),
   usage: UsageSnapshot[] = [],
   keys: UsageKeyDiagnostic[] = [],
+  hidden: string[] = [],
 ) {
   const localTz = Intl.DateTimeFormat().resolvedOptions().timeZone || "local"
   return {
@@ -1236,6 +1286,8 @@ export function statusPayload(
     leadMinutes: opts.leadMinutes ?? 15,
     local: { tz: localTz, time: fmtClock(now) },
     utc: fmtClock(now, "UTC"),
+    onlyConfigured: opts.onlyConfigured !== false,
+    hidden,
     usage: {
       enabled: opts.usage?.enabled ?? true,
       refreshMin: opts.usage?.refreshMin ?? 5,
@@ -1269,7 +1321,9 @@ export function statusPayload(
         }
       }),
     },
-    providers: enrich(providers, now).map((e) => ({
+    providers: enrich(providers, now).map((e) => {
+      const day = daySegments(e.pv, now)
+      return {
       id: e.pv.id,
       name: e.pv.name,
       scope: e.pv.scope,
@@ -1284,9 +1338,11 @@ export function statusPayload(
       pct: e.pct,
       sinceLocal: e.status.since != null ? fmtClock(e.status.since) : null,
       untilLabel: e.untilLabel,
+      day: { segments: day.segments, nowMin: day.nowMin, nowLabel: day.nowLabel },
       source: e.pv.source,
       checked: e.pv.checked,
-    })),
+      }
+    }),
   }
 }
 
@@ -1297,43 +1353,58 @@ export function statusPayload(
 const HTML_PAGE = `<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>opencode peak-hours</title>
+<script>try{var t=localStorage.getItem("peakhours-theme");if(t==="light"||t==="dark")document.documentElement.dataset.theme=t;else if(!matchMedia("(prefers-color-scheme: dark)").matches)document.documentElement.dataset.theme="light"}catch(e){}</script>
 <style>
-:root{color-scheme:dark}
-body{margin:0;background:#0e1013;color:#d7dce3;font:14px/1.5 ui-sans-serif,system-ui,"Segoe UI",sans-serif;padding:28px}
-h1{font-size:17px;margin:0 0 2px}.sub{color:#8b93a1;font-size:12px;margin-bottom:22px}
+:root{--bg:#0e1013;--card:#161a20;--border:#232935;--ink:#d7dce3;--mut:#8b93a1;--faint:#77808f;--peakbg:#3a2b12;--peakink:#e8b04b;--peakbd:#6b4e1d;--offbg:#10281a;--offink:#57c98a;--offbd:#1e5233;--nonebg:#1c2027;--noneink:#8b93a1;--nonebd:#2a313d;--accent:#6aa7ff;--err:#e05e5e;--stale:#e8b04b;--barbg:#20262f;--peakseg:#e8b04b;--now:#ffffff;color-scheme:dark}
+html[data-theme="light"]{--bg:#f4f6f9;--card:#ffffff;--border:#d9dfe7;--ink:#1d2229;--mut:#5c6674;--faint:#79828f;--peakbg:#fcf1d8;--peakink:#8a5c07;--peakbd:#e5cb8d;--offbg:#e3f4ea;--offink:#147648;--offbd:#b5dfc9;--nonebg:#eceff3;--noneink:#5c6674;--nonebd:#cfd6df;--accent:#1e63cf;--err:#bd3a3a;--stale:#8a5c07;--barbg:#e2e7ee;--peakseg:#d7991c;--now:#1d2229;color-scheme:light}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 ui-sans-serif,system-ui,"Segoe UI",sans-serif;padding:28px}
+h1{font-size:17px;margin:0 0 2px;display:flex;align-items:center}.sub{color:var(--mut);font-size:12px;margin-bottom:22px}
+#theme{margin-left:auto;background:var(--card);color:var(--mut);border:1px solid var(--border);border-radius:999px;font:inherit;font-size:11px;padding:3px 11px;cursor:pointer}
+#theme:hover{color:var(--ink)}
 .grid{display:grid;gap:14px;grid-template-columns:repeat(auto-fill,minmax(330px,1fr))}
-.card{background:#161a20;border:1px solid #232935;border-radius:12px;padding:14px 16px}
+.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px 16px}
 .top{display:flex;align-items:center;gap:10px;margin-bottom:6px}
 .name{font-weight:600;font-size:15px}
 .badge{margin-left:auto;font-size:11px;font-weight:700;letter-spacing:.4px;padding:3px 9px;border-radius:999px;white-space:nowrap}
-.peak{background:#3a2b12;color:#e8b04b;border:1px solid #6b4e1d}
-.off{background:#10281a;color:#57c98a;border:1px solid #1e5233}
-.none{background:#1c2027;color:#8b93a1;border:1px solid #2a313d}
-.win{font-size:12.5px;color:#aab3c0;margin:2px 0}
-.b{margin-top:8px;font-size:12.5px;color:#c8cfd9}
-.note{font-size:11.5px;color:#77808f;margin-top:4px}
-.bar{height:6px;background:#20262f;border-radius:4px;margin-top:10px;overflow:hidden}
+.peak{background:var(--peakbg);color:var(--peakink);border:1px solid var(--peakbd)}
+.off{background:var(--offbg);color:var(--offink);border:1px solid var(--offbd)}
+.none{background:var(--nonebg);color:var(--noneink);border:1px solid var(--nonebd)}
+.win{font-size:12.5px;color:var(--mut);margin:2px 0}
+.b{margin-top:8px;font-size:12.5px;color:var(--ink)}
+.note{font-size:11.5px;color:var(--faint);margin-top:4px}
+.bar{height:6px;background:var(--barbg);border-radius:4px;margin-top:10px;overflow:hidden}
 .bar>i{display:block;height:100%;border-radius:4px}
-.meta{display:flex;justify-content:space-between;gap:10px;font-size:11px;color:#77808f;margin-top:5px}
+.meta{display:flex;justify-content:space-between;gap:10px;font-size:11px;color:var(--faint);margin-top:5px}
 #usage .meta span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
-a{color:#6aa7ff;text-decoration:none}a:hover{text-decoration:underline}
+a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
 .src{font-size:11px;margin-top:8px}
-.err{color:#e05e5e;font-size:12.5px;margin-top:6px}
-.stale{color:#e8b04b;font-size:11px;margin-top:4px}
+.err{color:var(--err);font-size:12.5px;margin-top:6px}
+.stale{color:var(--stale);font-size:11px;margin-top:4px}
+.daybar{position:relative;height:12px;background:var(--barbg);border-radius:6px;margin-top:10px;overflow:hidden}
+.daybar>i{position:absolute;top:0;bottom:0;background:var(--peakseg)}
+.daybar>u{position:absolute;top:0;bottom:0;width:2px;background:var(--now);box-shadow:0 0 0 1px var(--card)}
+.daymeta{display:flex;justify-content:space-between;gap:10px;font-size:10px;color:var(--faint);margin-top:4px}
 </style></head><body>
-<h1>Model provider peak-hours</h1><div class="sub" id="clocks"></div><div class="grid" id="grid"></div>
+<h1>Model provider peak-hours<button id="theme" title="color scheme: auto / light / dark">◐ auto</button></h1><div class="sub" id="clocks"></div><div class="grid" id="grid"></div>
 <div id="usage"></div>
 <script>
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+var THEME_ORDER=["auto","light","dark"];
+function themePref(){try{var t=localStorage.getItem("peakhours-theme");return t==="light"||t==="dark"?t:"auto"}catch(e){return"auto"}}
+function applyTheme(){var t=themePref();var dark=t==="dark"||(t==="auto"&&(!window.matchMedia||matchMedia("(prefers-color-scheme: dark)").matches));document.documentElement.dataset.theme=dark?"dark":"light";var b=document.getElementById("theme");if(b)b.textContent=(t==="auto"?"◐":t==="light"?"☀":"☾")+" "+t}
+function cycleTheme(){var t=themePref();t=THEME_ORDER[(THEME_ORDER.indexOf(t)+1)%3];try{localStorage.setItem("peakhours-theme",t)}catch(e){}applyTheme()}
+applyTheme();document.getElementById("theme").onclick=cycleTheme;
+if(window.matchMedia)try{matchMedia("(prefers-color-scheme: dark)").addEventListener("change",function(){if(themePref()==="auto")applyTheme()})}catch(e){}
 async function refresh(){
  try{
   const d=await(await fetch("/api/status")).json();
-  document.getElementById("clocks").textContent="local "+d.local.time+" ("+d.local.tz+") · UTC "+d.utc+" · lead-time alerts "+d.leadMinutes+" min · auto-refresh 30 s";
-  document.getElementById("grid").innerHTML=d.providers.map(p=>{
+  document.getElementById("clocks").textContent="local "+d.local.time+" ("+d.local.tz+") · UTC "+d.utc+" · lead-time alerts "+d.leadMinutes+" min · auto-refresh 30 s"+(d.hidden&&d.hidden.length?" · hidden (no API key): "+d.hidden.join(", "):"");
+  document.getElementById("grid").innerHTML=d.providers.length?d.providers.map(p=>{
    const badge=p.state==="peak"?'<span class="badge peak">PEAK</span>':p.state==="offpeak"?'<span class="badge off">OFF-PEAK</span>':'<span class="badge none">NO FIXED WINDOW</span>';
-   const bar=p.pct==null?"":'<div class="bar"><i style="width:'+p.pct+'%;background:'+(p.state==="peak"?"#e8b04b":"#57c98a")+'"></i></div><div class="meta"><span>window started '+esc(p.sinceLocal||"")+'</span><span>'+esc(p.untilLabel||"")+"</span></div>";
-   return '<div class="card"><div class="top"><span class="name">'+esc(p.name)+"</span>"+badge+'</div><div class="win">'+esc(p.scopeLabel)+" · tz "+esc(p.tz)+"</div>"+(p.windows.length?'<div class="win">peak: '+p.windows.map(esc).join(" & ")+"</div>":"")+'<div class="b">'+esc(p.benefit)+"</div>"+(p.note?'<div class="note">'+esc(p.note)+"</div>":"")+bar+'<div class="src">source: <a href="'+esc(p.source)+'" target="_blank" rel="noreferrer">'+esc(p.source.split("/")[2])+"</a> · verified "+esc(p.checked)+"</div></div>";
-  }).join("");
+   const bar=p.pct==null?"":'<div class="bar"><i style="width:'+p.pct+'%;background:'+(p.state==="peak"?"var(--peakseg)":"var(--offink)")+'"></i></div><div class="meta"><span>window started '+esc(p.sinceLocal||"")+'</span><span>'+esc(p.untilLabel||"")+"</span></div>";
+   const day=p.windows.length&&p.day?'<div class="daybar">'+p.day.segments.map(function(s){return '<i style="left:'+(s[0]/14.4)+'%;width:'+((s[1]-s[0])/14.4)+'%"></i>'}).join("")+'<u style="left:'+(p.day.nowMin/14.4)+'%" title="now '+esc(p.day.nowLabel)+" "+esc(p.tz)+'"></u></div><div class="daymeta"><span>00:00</span><span>now '+esc(p.day.nowLabel)+" · "+esc(p.tz)+'</span><span>24:00</span></div>':"";
+   return '<div class="card"><div class="top"><span class="name">'+esc(p.name)+"</span>"+badge+'</div><div class="win">'+esc(p.scopeLabel)+" · tz "+esc(p.tz)+"</div>"+(p.windows.length?'<div class="win">peak: '+p.windows.map(esc).join(" & ")+"</div>":"")+'<div class="b">'+esc(p.benefit)+"</div>"+(p.note?'<div class="note">'+esc(p.note)+"</div>":"")+day+bar+'<div class="src">source: <a href="'+esc(p.source)+'" target="_blank" rel="noreferrer">'+esc(p.source.split("/")[2])+"</a> · verified "+esc(p.checked)+"</div></div>";
+  }).join(""):'<div class="card">'+esc(d.hidden&&d.hidden.length?"All tracked providers are hidden — no API key configured for: "+d.hidden.join(", "):"no providers to show")+"</div>";
   document.getElementById("usage").innerHTML=usageHtml(d.usage);
  }catch(e){document.getElementById("grid").innerHTML='<div class="card">status unavailable: '+esc(e.message)+"</div>"}
 }
@@ -1347,7 +1418,7 @@ function usageHtml(u){
   if(s.status!=="ok"&&(!s.windows||!s.windows.length))return '<div class="card">'+head+keyline+'<div class="err">'+esc(s.error||"unavailable")+'</div><div class="note">'+esc(s.fetchedAgo||"")+"</div></div>";
   var wins=(s.windows||[]).map(function(w){
    var pct=w.usedPercent==null?null:Math.max(0,Math.min(100,w.usedPercent));
-   var col=pct==null?"#6aa7ff":pct<60?"#57c98a":pct<85?"#e8b04b":"#e05e5e";
+   var col=pct==null?"var(--accent)":pct<60?"var(--offink)":pct<85?"var(--peakseg)":"var(--err)";
    var bar=pct==null?"":'<div class="bar"><i style="width:'+pct+'%;background:'+col+'"></i></div>';
    return '<div class="win">'+esc(w.label)+'</div>'+bar+'<div class="meta"><span>'+esc(w.meta||"")+'</span><span>'+esc(w.reset||"")+"</span></div>";
   }).join("");
@@ -1361,12 +1432,61 @@ function usageHtml(u){
 
 type Route = { status: number; type: string; body: string; cors: Record<string, string> }
 
+/** Shared with opencode web: OPENCODE_SERVER_PASSWORD enables HTTP Basic auth (user defaults to "opencode"). */
+type ServerAuth = { user: string; password: string } | null
+
+function serverAuthFromEnv(): ServerAuth {
+  const password = envStr("OPENCODE_SERVER_PASSWORD")
+  if (!password) return null
+  return { user: envStr("OPENCODE_SERVER_USERNAME") ?? "opencode", password }
+}
+
+function basicAuthOk(header: string | null | undefined, auth: ServerAuth): boolean {
+  if (!auth) return true
+  if (!header || !header.startsWith("Basic ")) return false
+  try {
+    const decoded = atob(header.slice(6).trim())
+    const sep = decoded.indexOf(":")
+    return (sep < 0 ? decoded : decoded.slice(0, sep)) === auth.user && (sep < 0 ? "" : decoded.slice(sep + 1)) === auth.password
+  } catch {
+    return false
+  }
+}
+
+function unauthorized(): Route {
+  return {
+    status: 401,
+    type: "text/plain; charset=utf-8",
+    body: "authentication required — credentials mirror opencode web (OPENCODE_SERVER_USERNAME / OPENCODE_SERVER_PASSWORD)",
+    cors: { "WWW-Authenticate": 'Basic realm="opencode-quotas"' },
+  }
+}
+
+const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "::1"])
+
+/** Best host to display in URLs: loopback for loopback binds, else the primary LAN IPv4. */
+function displayHost(hostname: string): string {
+  if (LOOPBACK_HOSTS.has(hostname)) return "127.0.0.1"
+  try {
+    for (const list of Object.values(osMod.networkInterfaces())) {
+      for (const ni of list ?? []) {
+        if (ni.family === "IPv4" && !ni.internal) return ni.address
+      }
+    }
+  } catch {
+    /* fall through */
+  }
+  return "127.0.0.1"
+}
+
 function route(
   path: string,
   providers: ProviderDef[],
   opts: PeakHoursOptions,
   usage: UsageSnapshot[] = [],
   keys: UsageKeyDiagnostic[] = [],
+  hidden: string[] = [],
+  allowCors = false,
 ): Route {
   let pathname = path
   try {
@@ -1374,14 +1494,14 @@ function route(
   } catch {
     /* keep raw */
   }
-  const cors: Record<string, string> = { "Access-Control-Allow-Origin": "*" }
+  const cors: Record<string, string> = allowCors ? { "Access-Control-Allow-Origin": "*" } : {}
   if (pathname === "/" || pathname === "/index.html")
     return { status: 200, type: "text/html; charset=utf-8", body: HTML_PAGE, cors }
   if (pathname === "/api/status")
     return {
       status: 200,
       type: "application/json; charset=utf-8",
-      body: JSON.stringify(statusPayload(providers, opts, Date.now(), usage, keys)),
+      body: JSON.stringify(statusPayload(providers, opts, Date.now(), usage, keys, hidden)),
       cors,
     }
   if (pathname === "/api/usage")
@@ -1404,28 +1524,43 @@ function route(
 
 export type CompanionServer = { url: string; port: number; stop: () => void }
 
-/** Tiny localhost status server. Prefers Bun.serve (opencode runs on Bun), falls back to node:http. */
+/** Tiny status server. Prefers Bun.serve (opencode runs on Bun), falls back to node:http. */
 export async function startCompanionServer(
   port: number,
   providers: ProviderDef[],
   opts: PeakHoursOptions,
   usage: () => UsageSnapshot[] = () => [],
   keys: () => UsageKeyDiagnostic[] = () => [],
+  hidden: () => string[] = () => [],
+  auth: ServerAuth = null,
 ): Promise<CompanionServer> {
-  const Bun_ = (globalThis as unknown as { Bun?: { serve: (o: unknown) => { port: number; stop: (c: boolean) => void } } }).Bun
+  const hostname = opts.hostname ?? "0.0.0.0"
+  const loopback = LOOPBACK_HOSTS.has(hostname)
+  const allowCors = loopback && !auth
+  const Bun_ = (globalThis as unknown as {
+    Bun?: {
+      serve: (o: unknown) => { port: number; stop: (c: boolean) => void }
+    }
+  }).Bun
   if (Bun_?.serve) {
     let lastErr: unknown
     for (let p = port; p < port + 10; p++) {
       try {
         const srv = Bun_.serve({
           port: p,
-          hostname: "127.0.0.1",
-          fetch: (req: { url: string }) => {
-            const r = route(new URL(req.url).pathname + new URL(req.url).search, providers, opts, usage(), keys())
+          hostname,
+          fetch: (req: { url: string; headers: { get: (k: string) => string | null } }) => {
+            if (!basicAuthOk(req.headers?.get?.("authorization"), auth)) {
+              const u = unauthorized()
+              return new Response(u.body, { status: u.status, headers: { "Content-Type": u.type, ...u.cors } })
+            }
+            const r = route(new URL(req.url).pathname + new URL(req.url).search, providers, opts, usage(), keys(), hidden(), allowCors)
             return new Response(r.body, { status: r.status, headers: { "Content-Type": r.type, ...r.cors } })
           },
         })
-        return { url: `http://127.0.0.1:${srv.port}`, port: srv.port, stop: () => srv.stop(true) }
+        if (!loopback && !auth)
+          console.error("[peakhours] dashboard bound to " + hostname + " without authentication — set OPENCODE_SERVER_PASSWORD (same as opencode web) to protect it")
+        return { url: `http://${displayHost(hostname)}:${srv.port}`, port: srv.port, stop: () => srv.stop(true) }
       } catch (err) {
         lastErr = err
       }
@@ -1433,7 +1568,7 @@ export async function startCompanionServer(
     throw lastErr
   }
   const http = (await import("node:http")) as unknown as {
-    createServer: (cb: (req: { url?: string }, res: { writeHead: (s: number, h: Record<string, string>) => void; end: (b: string) => void }) => void) => {
+    createServer: (cb: (req: { url?: string; headers?: Record<string, string | string[] | undefined> }, res: { writeHead: (s: number, h: Record<string, string>) => void; end: (b: string) => void }) => void) => {
       listen: (port: number, host: string, cb: () => void) => void
       close: () => void
       on: (ev: string, cb: (e: unknown) => void) => void
@@ -1443,17 +1578,27 @@ export async function startCompanionServer(
   let lastErr: unknown
   for (let p = port; p < port + 10; p++) {
     const srv = http.createServer((req, res) => {
-      const r = route(req.url ?? "/", providers, opts, usage(), keys())
+      const raw = req.headers?.authorization
+      const header = Array.isArray(raw) ? raw[0] : raw
+      if (!basicAuthOk(header, auth)) {
+        const u = unauthorized()
+        res.writeHead(u.status, { "Content-Type": u.type, ...u.cors })
+        res.end(u.body)
+        return
+      }
+      const r = route(req.url ?? "/", providers, opts, usage(), keys(), hidden(), allowCors)
       res.writeHead(r.status, { "Content-Type": r.type, ...r.cors })
       res.end(r.body)
     })
     try {
       await new Promise<void>((resolve, reject) => {
         srv.on("error", reject)
-        srv.listen(p, "127.0.0.1", resolve)
+        srv.listen(p, hostname, resolve)
       })
       const bound = srv.address()?.port ?? p
-      return { url: `http://127.0.0.1:${bound}`, port: bound, stop: () => srv.close() }
+      if (!loopback && !auth)
+        console.error("[peakhours] dashboard bound to " + hostname + " without authentication — set OPENCODE_SERVER_PASSWORD (same as opencode web) to protect it")
+      return { url: `http://${displayHost(hostname)}:${bound}`, port: bound, stop: () => srv.close() }
     } catch (err) {
       lastErr = err
     }
@@ -1476,10 +1621,16 @@ function envNum(name: string, dflt: number): number {
   return Number.isFinite(v) && v >= 0 ? v : dflt
 }
 
+function envStr(name: string): string | undefined {
+  const v = process.env[name]
+  return v && v.trim() !== "" ? v.trim() : undefined
+}
+
 function mergeOpts(options?: PeakHoursOptions): PeakHoursOptions {
   const o = options ?? {}
   return {
     port: o.port ?? envNum("PEAKHOURS_PORT", 4117),
+    hostname: o.hostname ?? envStr("PEAKHOURS_HOSTNAME") ?? "0.0.0.0",
     leadMinutes: o.leadMinutes ?? envNum("PEAKHOURS_LEAD_MINUTES", 15),
     toastOnConnect: o.toastOnConnect ?? envBool("PEAKHOURS_TOAST_ON_CONNECT", true),
     cardOnSessionStart: o.cardOnSessionStart ?? envBool("PEAKHOURS_SESSION_CARD", true),
@@ -1487,6 +1638,7 @@ function mergeOpts(options?: PeakHoursOptions): PeakHoursOptions {
     notify: o.notify ?? envBool("PEAKHOURS_NOTIFY", false),
     providers: o.providers ?? (process.env.PEAKHOURS_PROVIDERS ? process.env.PEAKHOURS_PROVIDERS.split(",").map((s) => s.trim()).filter(Boolean) : undefined),
     custom: o.custom ?? [],
+    onlyConfigured: o.onlyConfigured ?? envBool("PEAKHOURS_ONLY_CONFIGURED", true),
     usage: usageConfig(o.usage),
     disabled: o.disabled ?? envBool("PEAKHOURS_DISABLE", false),
   }
@@ -1559,10 +1711,32 @@ export const PeakHoursPlugin: Plugin = async ({ client, $, directory }, options)
     const v = process.env[name]
     return v && v.trim() !== "" ? v.trim() : undefined
   }
+  /** Providers currently displayed. With onlyConfigured (default), a built-in provider
+   *  appears only while its usage source has a resolved API key; custom providers always
+   *  show. The array is mutated in place so server closures see updates. */
+  const visible: ProviderDef[] = []
+  const recomputeVisible = (): void => {
+    const next =
+      opts.onlyConfigured === false
+        ? providers
+        : providers.filter((p) => usageActive.has(p.id) || (opts.custom ?? []).some((c) => c.id === p.id))
+    visible.length = 0
+    visible.push(...next)
+  }
+  const hiddenIds = (): string[] => {
+    if (opts.onlyConfigured === false || visible.length === providers.length) return []
+    return providers.filter((p) => !visible.some((v) => v.id === p.id)).map((p) => p.id)
+  }
+
   /** Re-resolve keys each refresh cycle (options -> env -> opencode auth store -> provider env),
    *  so a fresh `opencode auth login` is picked up without restarting opencode. */
   const syncUsageActive = (): void => {
-    if (!ucfg.enabled || !fetchImpl) return
+    if (!ucfg.enabled || !fetchImpl) {
+      usageActive.clear()
+      keyInfo.clear()
+      recomputeVisible()
+      return
+    }
     const store = ucfg.authStore ? readOpencodeAuthStore() : null
     const optKeys = opts.usage?.keys ?? {}
     for (const src of USAGE_SOURCES) {
@@ -1577,6 +1751,7 @@ export const PeakHoursPlugin: Plugin = async ({ client, $, directory }, options)
         usageActive.delete(src.id)
       }
     }
+    recomputeVisible()
   }
   syncUsageActive()
   const usageKeyDiags = (): UsageKeyDiagnostic[] =>
@@ -1631,7 +1806,7 @@ export const PeakHoursPlugin: Plugin = async ({ client, $, directory }, options)
     const now = Date.now()
     const leadMs = (opts.leadMinutes ?? 0) * 60_000
     if (leadMs > 0) {
-      for (const pv of providers) {
+      for (const pv of visible) {
         if (!pv.peakWindows.length) continue
         const st = evaluate(pv, now)
         if (st.until == null || st.toPeak == null) continue
@@ -1675,10 +1850,11 @@ export const PeakHoursPlugin: Plugin = async ({ client, $, directory }, options)
 
   // --- companion server ----------------------------------------------------
 
+  const auth = serverAuthFromEnv()
   let server: CompanionServer | null = null
   if ((opts.port ?? 0) > 0) {
     try {
-      server = await startCompanionServer(opts.port!, providers, opts, usageSnapshots, usageKeyDiags)
+      server = await startCompanionServer(opts.port!, visible, opts, usageSnapshots, usageKeyDiags, hiddenIds, auth)
     } catch (err) {
       console.error("[peakhours] companion server could not start:", err instanceof Error ? err.message : err)
     }
@@ -1702,11 +1878,12 @@ export const PeakHoursPlugin: Plugin = async ({ client, $, directory }, options)
     config: async (config) => {
       if (!opts.command || !server) return
       config.command = config.command ?? {}
+      const curlAuth = auth ? ' -u "${OPENCODE_SERVER_USERNAME:-opencode}:${OPENCODE_SERVER_PASSWORD}"' : ""
       config.command["peakhours"] = {
         template: [
           "The shell output below is the live model-provider peak-hours status fetched from the peakhours companion server.",
           "Render it for the user EXACTLY as given (keep every provider row and number); do not add, drop or reinterpret rows. If the output says the server is unreachable, just say so.",
-          "!`curl -sf -m 2 " + server.url + "/peakhours.txt || echo PEAKHOURS_SERVER_UNREACHABLE`",
+          "!`curl -sf -m 2" + curlAuth + " " + server.url + "/peakhours.txt || echo PEAKHOURS_SERVER_UNREACHABLE`",
         ].join("\n"),
         description: "Show model-provider peak/off-peak hours + live quota & balance (status table)",
       }
@@ -1724,7 +1901,7 @@ export const PeakHoursPlugin: Plugin = async ({ client, $, directory }, options)
         setTimeout(() => {
           const uSum = usageToastSummary(usageSnapshots())
           const footer = (server ? `\ncompanion page: ${server.url} · /peakhours for the full table` : "") + (uSum ? `\nquota: ${uSum}` : "")
-          void toast(toastStatus(providers) + footer, "Provider peak-hours", "info", 15_000)
+          void toast(toastStatus(visible) + footer, "Provider peak-hours", "info", 15_000)
         }, 800)
         return
       }
@@ -1733,7 +1910,7 @@ export const PeakHoursPlugin: Plugin = async ({ client, $, directory }, options)
         if ((event.properties as { command?: string }).command !== "peakhours") return
         // Instant zero-cost display (the command's template echo comes separately).
         setTimeout(() => {
-          void toast(toastStatus(providers) + (server ? `\ncompanion: ${server.url}` : ""), "Provider peak-hours", "info", 20_000)
+          void toast(toastStatus(visible) + (server ? `\ncompanion: ${server.url}` : ""), "Provider peak-hours", "info", 20_000)
         }, 50)
         return
       }
@@ -1750,7 +1927,7 @@ export const PeakHoursPlugin: Plugin = async ({ client, $, directory }, options)
             .prompt({
               path: { id: info.id },
               body: {
-                parts: [{ type: "text", text: markdownCard(providers, Date.now(), usageSnapshots()), synthetic: true, ignored: true }],
+                parts: [{ type: "text", text: markdownCard(visible, Date.now(), usageSnapshots()), synthetic: true, ignored: true }],
                 noReply: true,
               },
             })

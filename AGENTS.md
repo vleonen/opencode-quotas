@@ -88,3 +88,13 @@ plugin — it only holds gitignored dev deps.
 - Live-test plugin loading headlessly: `timeout 30 opencode web --port 47142` in a
   scratch dir, then `curl 127.0.0.1:4117/api/status`. TUI-spawned instances use the
   v2 loader, `opencode web` the v1 one — test the path you actually run.
+- opencode creates plugin instances **lazily per directory** — a freshly booted web
+  instance runs no plugin until a client touches a directory, and each directory gets
+  its own companion server (ports fall through 4117, 4118, ...). When a long-running
+  instance squats the whole 411x range, test the server directly instead: the module
+  is dependency-free, so `bun -e 'await import(".../opencode-quotas.ts")'` + calling
+  the default export's `server(input, options)` reproduces the v1 loader exactly.
+- The dashboard binds `0.0.0.0` by default and mirrors opencode web auth:
+  `OPENCODE_SERVER_PASSWORD` (+ `OPENCODE_SERVER_USERNAME`, default `opencode`)
+  enables HTTP Basic auth on all routes; the `/peakhours` curl template injects
+  `-u` from the environment (never the secret itself).
