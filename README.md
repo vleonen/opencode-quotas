@@ -201,9 +201,13 @@ UTC clocks, and color-coded usage (green < 60 %, amber < 85 %, red ≥ 85 %). Wh
 first provider poll is still in flight, the quota section shows **skeleton cards**
 ("waiting for first poll…") and the page re-polls every 2 s until data lands, then
 settles to 30 s. A **↻ refresh** button triggers an immediate re-poll (the `/quotas`
-command does the same before rendering). A scheme toggle (`◐ auto / ☀ light / ☾ dark`)
-follows your OS/browser scheme by default and remembers the choice; the text table,
-toasts, and session cards show a matching 24-slot sparkline over your local day
+command does the same before rendering). A **⚙ settings** dialog persists
+per-browser preferences in a cookie (1 year): theme (auto / light / dark — auto
+follows the OS scheme), UI scale, peak-bar and progress-bar heights, and
+per-provider / per-source **visibility toggles** that hide individual cards from
+the peak-hours grid and the quota & balance section (purely display-level — the
+API payload and other viewers are unaffected); the text table, toasts, and
+session cards show a matching 24-slot sparkline over your local day
 (`▓` peak / `░` off-peak / `▮` now). When bound to a non-loopback address without a
 password, the page shows an "unsecured — reachable on LAN" banner instead of logging
 console noise.

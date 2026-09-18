@@ -1354,15 +1354,15 @@ export function statusPayload(
 const HTML_PAGE = `<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>opencode peak-hours</title>
-<script>try{var t=localStorage.getItem("opencode-quotas-theme");if(t==="light"||t==="dark")document.documentElement.dataset.theme=t;else if(!matchMedia("(prefers-color-scheme: dark)").matches)document.documentElement.dataset.theme="light"}catch(e){}</script>
+<script>try{var m=document.cookie.match(/(?:^|;\\s*)oq-settings=([^;]*)/);var t=m?JSON.parse(decodeURIComponent(m[1])).theme:null;if(t!=="light"&&t!=="dark")t=localStorage.getItem("opencode-quotas-theme");if(t==="light"||t==="dark")document.documentElement.dataset.theme=t;else if(!matchMedia("(prefers-color-scheme: dark)").matches)document.documentElement.dataset.theme="light"}catch(e){}</script>
 <style>
-:root{--bg:#0e1013;--card:#161a20;--border:#232935;--ink:#d7dce3;--mut:#8b93a1;--faint:#77808f;--peakbg:#3a2b12;--peakink:#e8b04b;--peakbd:#6b4e1d;--offbg:#10281a;--offink:#57c98a;--offbd:#1e5233;--nonebg:#1c2027;--noneink:#8b93a1;--nonebd:#2a313d;--accent:#6aa7ff;--err:#e05e5e;--stale:#e8b04b;--barbg:#20262f;--peakseg:#e8b04b;--now:#ffffff;color-scheme:dark}
+:root{--bg:#0e1013;--card:#161a20;--border:#232935;--ink:#d7dce3;--mut:#8b93a1;--faint:#77808f;--peakbg:#3a2b12;--peakink:#e8b04b;--peakbd:#6b4e1d;--offbg:#10281a;--offink:#57c98a;--offbd:#1e5233;--nonebg:#1c2027;--noneink:#8b93a1;--nonebd:#2a313d;--accent:#6aa7ff;--err:#e05e5e;--stale:#e8b04b;--barbg:#20262f;--peakseg:#e8b04b;--now:#ffffff;--daybar-h:12px;--bar-h:6px;color-scheme:dark}
 html[data-theme="light"]{--bg:#f4f6f9;--card:#ffffff;--border:#d9dfe7;--ink:#1d2229;--mut:#5c6674;--faint:#79828f;--peakbg:#fcf1d8;--peakink:#8a5c07;--peakbd:#e5cb8d;--offbg:#e3f4ea;--offink:#147648;--offbd:#b5dfc9;--nonebg:#eceff3;--noneink:#5c6674;--nonebd:#cfd6df;--accent:#1e63cf;--err:#bd3a3a;--stale:#8a5c07;--barbg:#e2e7ee;--peakseg:#d7991c;--now:#1d2229;color-scheme:light}
 body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 ui-sans-serif,system-ui,"Segoe UI",sans-serif;padding:28px}
 h1{font-size:17px;margin:0 0 2px;display:flex;align-items:center}.sub{color:var(--mut);font-size:12px;margin-bottom:22px}
-#theme,#rfrsh{margin-left:8px;background:var(--card);color:var(--mut);border:1px solid var(--border);border-radius:999px;font:inherit;font-size:11px;padding:3px 11px;cursor:pointer}
-#theme{margin-left:auto}
-#theme:hover,#rfrsh:hover{color:var(--ink)}
+#cfg,#rfrsh{margin-left:8px;background:var(--card);color:var(--mut);border:1px solid var(--border);border-radius:999px;font:inherit;font-size:11px;padding:3px 11px;cursor:pointer}
+#cfg{margin-left:auto}
+#cfg:hover,#rfrsh:hover{color:var(--ink)}
 .grid{display:grid;gap:14px;grid-template-columns:repeat(auto-fill,minmax(330px,1fr))}
 .card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px 16px}
 .top{display:flex;align-items:center;gap:10px;margin-bottom:6px}
@@ -1374,7 +1374,7 @@ h1{font-size:17px;margin:0 0 2px;display:flex;align-items:center}.sub{color:var(
 .win{font-size:12.5px;color:var(--mut);margin:2px 0}
 .b{margin-top:8px;font-size:12.5px;color:var(--ink)}
 .note{font-size:11.5px;color:var(--faint);margin-top:4px}
-.bar{height:6px;background:var(--barbg);border-radius:4px;margin-top:10px;overflow:hidden}
+.bar{height:var(--bar-h);background:var(--barbg);border-radius:4px;margin-top:10px;overflow:hidden}
 .bar>i{display:block;height:100%;border-radius:4px}
 .meta{display:flex;justify-content:space-between;gap:10px;font-size:11px;color:var(--faint);margin-top:5px}
 #usage .meta span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
@@ -1382,25 +1382,69 @@ a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
 .src{font-size:11px;margin-top:8px}
 .err{color:var(--err);font-size:12.5px;margin-top:6px}
 .stale{color:var(--stale);font-size:11px;margin-top:4px}
-.daybar{position:relative;height:12px;background:var(--barbg);border-radius:6px;margin-top:10px;overflow:hidden}
+.daybar{position:relative;height:var(--daybar-h);background:var(--barbg);border-radius:6px;margin-top:10px;overflow:hidden}
 .daybar>i{position:absolute;top:0;bottom:0;background:var(--peakseg)}
 .daybar>u{position:absolute;top:0;bottom:0;width:2px;background:var(--now);box-shadow:0 0 0 1px var(--card)}
 .daymeta{display:flex;justify-content:space-between;gap:10px;font-size:10px;color:var(--faint);margin-top:4px}
 .warn{background:var(--peakbg);color:var(--peakink);border:1px solid var(--peakbd);border-radius:8px;padding:6px 11px;font-size:12px;margin:10px 0 0}
 @keyframes slide{0%{transform:translateX(-110%)}100%{transform:translateX(370%)}}
 .bar.loading>i{width:28%;background:var(--accent);animation:slide 1.1s linear infinite}
+#cfgwrap{position:fixed;inset:0;z-index:50}
+#cfgback{position:absolute;inset:0;background:rgba(0,0,0,.45)}
+#cfgcard{position:absolute;top:60px;left:50%;transform:translateX(-50%);width:min(560px,92vw);background:var(--card);border:1px solid var(--border);border-radius:14px;padding:16px 18px;max-height:82vh;overflow:auto;box-shadow:0 12px 40px rgba(0,0,0,.35)}
+.cfghead{display:flex;align-items:center;margin-bottom:10px}.cfghead b{font-size:15px}
+#cfgclose{margin-left:auto;background:none;border:none;color:var(--mut);font-size:14px;cursor:pointer}#cfgclose:hover{color:var(--ink)}
+.cfgrow{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:8px 0}
+.cfglabel{font-size:12.5px;color:var(--mut)}
+.seg{display:inline-flex;border:1px solid var(--border);border-radius:999px;overflow:hidden}
+.seg button{background:none;border:none;color:var(--mut);font:inherit;font-size:11.5px;padding:3px 12px;cursor:pointer}
+.seg button+button{border-left:1px solid var(--border)}
+.seg button.on{background:var(--accent);color:#fff}
+.cb{display:block;font-size:12.5px;color:var(--ink);padding:2px 0;cursor:pointer}
+.cb input{margin-right:6px;accent-color:var(--accent)}
 </style></head><body>
-<h1>Model provider peak-hours<button id="rfrsh" title="poll provider accounts now">↻ refresh</button><button id="theme" title="color scheme: auto / light / dark">◐ auto</button></h1><div id="warn"></div><div class="sub" id="clocks"></div><div class="grid" id="grid"></div>
+<h1>Model provider peak-hours<button id="rfrsh" title="poll provider accounts now">↻ refresh</button><button id="cfg" title="display settings">⚙ settings</button></h1><div id="warn"></div><div class="sub" id="clocks"></div><div class="grid" id="grid"></div>
 <div id="usage"></div>
+<div id="cfgwrap" hidden><div id="cfgback"></div><div id="cfgcard">
+ <div class="cfghead"><b>Settings</b><button id="cfgclose" title="close">✕</button></div>
+ <div class="cfgrow"><span class="cfglabel">Theme</span><span class="seg" data-set="theme"><button data-v="auto">Auto</button><button data-v="light">Light</button><button data-v="dark">Dark</button></span></div>
+ <div class="cfgrow"><span class="cfglabel">UI size (text &amp; cards)</span><span class="seg" data-set="zoom"><button data-v="0.9">S</button><button data-v="1">M</button><button data-v="1.15">L</button></span></div>
+ <div class="cfgrow"><span class="cfglabel">Peak bar height</span><span class="seg" data-set="daybar"><button data-v="8px">Slim</button><button data-v="12px">Normal</button><button data-v="16px">Tall</button></span></div>
+ <div class="cfgrow"><span class="cfglabel">Progress bar height</span><span class="seg" data-set="barh"><button data-v="4px">Slim</button><button data-v="6px">Normal</button><button data-v="8px">Tall</button></span></div>
+ <div class="cfglabel" style="margin-top:12px">Visible providers (peak-hours)</div>
+ <div id="cfgprov" style="margin-top:4px">unavailable until data loads</div>
+ <div class="cfglabel" style="margin-top:12px">Visible quota &amp; balance</div>
+ <div id="cfgusage" style="margin-top:4px">unavailable until data loads</div>
+ <div class="note" style="margin-top:12px">Saved in this browser (cookie, 1 year) — each viewer keeps their own settings; server data is unaffected.</div>
+</div></div>
 <script>
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
-var THEME_ORDER=["auto","light","dark"];
-function themePref(){try{var t=localStorage.getItem("opencode-quotas-theme");return t==="light"||t==="dark"?t:"auto"}catch(e){return"auto"}}
-function applyTheme(){var t=themePref();var dark=t==="dark"||(t==="auto"&&(!window.matchMedia||matchMedia("(prefers-color-scheme: dark)").matches));document.documentElement.dataset.theme=dark?"dark":"light";var b=document.getElementById("theme");if(b)b.textContent=(t==="auto"?"◐":t==="light"?"☀":"☾")+" "+t}
-function cycleTheme(){var t=themePref();t=THEME_ORDER[(THEME_ORDER.indexOf(t)+1)%3];try{localStorage.setItem("opencode-quotas-theme",t)}catch(e){}applyTheme()}
-applyTheme();document.getElementById("theme").onclick=cycleTheme;
-if(window.matchMedia)try{matchMedia("(prefers-color-scheme: dark)").addEventListener("change",function(){if(themePref()==="auto")applyTheme()})}catch(e){}
-function zp(d,tz){try{var f=new Intl.DateTimeFormat("en-US",{timeZone:tz,hour12:false,year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit"}),a={},it,f2;for(it of f.formatToParts(d))a[it.type]=it.value;return{y:+a.year,mo:+a.month,d:+a.day,hh:(+a.hour)%24,mm:+a.minute,wd:new Date(Date.UTC(+a.year,+a.month-1,+a.day)).getUTCDay()}}catch(e){return null}}
+var SET={theme:"auto",zoom:"1",daybar:"12px",barh:"6px",hideP:[],hideU:[]};
+function loadSet(){try{var m=document.cookie.match(/(?:^|;\\s*)oq-settings=([^;]*)/);if(m){var o=JSON.parse(decodeURIComponent(m[1])),k;for(k in SET)if(o[k]!==undefined)SET[k]=o[k];return}var t=localStorage.getItem("opencode-quotas-theme");if(t==="light"||t==="dark")SET.theme=t}catch(e){}}
+function saveSet(){try{document.cookie="oq-settings="+encodeURIComponent(JSON.stringify(SET))+";max-age=31536000;path=/;SameSite=Lax"}catch(e){}}
+function applyTheme(){var t=SET.theme;var dark=t==="dark"||(t==="auto"&&(!window.matchMedia||matchMedia("(prefers-color-scheme: dark)").matches));document.documentElement.dataset.theme=dark?"dark":"light"}
+function applySizes(){try{document.body.style.zoom=+SET.zoom}catch(e){}var r=document.documentElement.style;r.setProperty("--daybar-h",SET.daybar);r.setProperty("--bar-h",SET.barh)}
+loadSet();applyTheme();applySizes();
+if(window.matchMedia)try{matchMedia("(prefers-color-scheme: dark)").addEventListener("change",function(){if(SET.theme==="auto")applyTheme()})}catch(e){}
+var cfg=document.getElementById("cfgwrap");
+function syncCfg(){var segs=cfg.querySelectorAll(".seg"),i,bs,j;for(i=0;i<segs.length;i++){var k=segs[i].dataset.set,bs=segs[i].querySelectorAll("button");for(j=0;j<bs.length;j++)bs[j].classList.toggle("on",bs[j].dataset.v===String(SET[k]))}}
+function buildCfgLists(){
+ var P=(last&&last.providers)||[],U=(last&&last.usage&&last.usage.sources)||[];
+ function cb(kind,id,name){var on=SET[kind==="p"?"hideP":"hideU"].indexOf(id)<0;return '<label class="cb"><input type="checkbox" data-kind="'+kind+'" data-id="'+esc(id)+'"'+(on?" checked":"")+"> "+esc(name)+"</label>"}
+ var pv=document.getElementById("cfgprov"),us=document.getElementById("cfgusage");
+ pv.innerHTML=P.length?P.map(function(p){return cb("p",p.id,p.name)}).join(""):"unavailable until data loads";
+ us.innerHTML=U.length?U.map(function(s){return cb("u",s.id,s.name)}).join(""):"unavailable until data loads";
+}
+function openCfg(){buildCfgLists();syncCfg();cfg.hidden=false}
+function closeCfg(){cfg.hidden=true}
+document.getElementById("cfg").onclick=openCfg;
+document.getElementById("cfgclose").onclick=closeCfg;
+document.getElementById("cfgback").onclick=closeCfg;
+cfg.addEventListener("click",function(ev){var b=ev.target.closest?ev.target.closest("button"):null;if(!b||!b.dataset)return;
+ if(b.dataset.v&&b.parentElement.dataset.set){var k=b.parentElement.dataset.set;SET[k]=b.dataset.v;if(k==="theme")applyTheme();else applySizes();saveSet();syncCfg();renderLast()}});
+cfg.addEventListener("change",function(ev){var c=ev.target;if(!c.dataset||!c.dataset.kind)return;var arr=SET[c.dataset.kind==="p"?"hideP":"hideU"],i=arr.indexOf(c.dataset.id);
+ if(c.checked&&i>=0)arr.splice(i,1);if(!c.checked&&i<0)arr.push(c.dataset.id);saveSet();renderLast()});
+function zp(d,tz){try{var f=new Intl.DateTimeFormat("en-US",{timeZone:tz,hour12:false,year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit"}),a={},it;for(it of f.formatToParts(d))a[it.type]=it.value;return{y:+a.year,mo:+a.month,d:+a.day,hh:(+a.hour)%24,mm:+a.minute,wd:new Date(Date.UTC(+a.year,+a.month-1,+a.day)).getUTCDay()}}catch(e){return null}}
 function tzOff(tz,epoch){var p=zp(new Date(epoch),tz);if(!p)return 0;var asUTC=Date.UTC(p.y,p.mo-1,p.d,p.hh,p.mm);return Math.round((asUTC-Math.floor(epoch/60000)*60000)/60000)}
 function wallUTC(tz,y,mo,d,hh,mm){var g=Date.UTC(y,mo-1,d,hh,mm),i;for(i=0;i<3;i++){var o=tzOff(tz,g);g=Date.UTC(y,mo-1,d,hh,mm)-o*60000}return g}
 function localDayBar(p,now){
@@ -1420,34 +1464,42 @@ function localDayBar(p,now){
  return '<div class="daybar">'+bars+'<u style="left:'+nowPos+'%" title="now"></u></div><div class="daymeta"><span>00:00 local</span><span>peaks shown in your local day · source tz '+esc(p.tz)+'</span><span>24:00</span></div>';
 }
 var last=null;
+function render(d){
+ document.getElementById("warn").innerHTML=d.insecure?'⚠ reachable on LAN without authentication — set OPENCODE_SERVER_PASSWORD (same as opencode web)':""; 
+ document.getElementById("rfrsh").style.display=(d.usage&&d.usage.enabled)?"":"none";
+ var nH=(SET.hideP.length?SET.hideP.length+" provider"+(SET.hideP.length>1?"s":""):"")+(SET.hideU.length?(SET.hideP.length?", ":"")+SET.hideU.length+" quota source"+(SET.hideU.length>1?"s":""):"");
+ document.getElementById("clocks").textContent="local "+d.local.time+" ("+d.local.tz+") · UTC "+d.utc+" · lead-time alerts "+d.leadMinutes+" min · auto-refresh 30 s"+(d.hidden&&d.hidden.length?" · hidden (no API key): "+d.hidden.join(", "):"")+(nH?" · settings hide "+nH:"");
+ var ps=d.providers.filter(function(p){return SET.hideP.indexOf(p.id)<0});
+ document.getElementById("grid").innerHTML=ps.length?ps.map(p=>{
+  const badge=p.state==="peak"?'<span class="badge peak">PEAK</span>':p.state==="offpeak"?'<span class="badge off">OFF-PEAK</span>':'<span class="badge none">NO FIXED WINDOW</span>';
+  const bar=p.pct==null?"":'<div class="bar"><i style="width:'+p.pct+'%;background:'+(p.state==="peak"?"var(--peakseg)":"var(--offink)")+'"></i></div><div class="meta"><span>window started '+esc(p.sinceLocal||"")+'</span><span>'+esc(p.untilLabel||"")+"</span></div>";
+  const day=localDayBar(p,Date.now());
+  return '<div class="card"><div class="top"><span class="name">'+esc(p.name)+"</span>"+badge+'</div><div class="win">'+esc(p.scopeLabel)+" · tz "+esc(p.tz)+"</div>"+(p.windows.length?'<div class="win">peak: '+p.windows.map(esc).join(" & ")+"</div>":"")+'<div class="b">'+esc(p.benefit)+"</div>"+(p.note?'<div class="note">'+esc(p.note)+"</div>":"")+day+bar+'<div class="src">source: <a href="'+esc(p.source)+'" target="_blank" rel="noreferrer">'+esc(p.source.split("/")[2])+"</a> · verified "+esc(p.checked)+"</div></div>";
+ }).join(""):'<div class="card">'+esc(ps.length||!d.providers.length?(d.hidden&&d.hidden.length?"All tracked providers are hidden — no API key configured for: "+d.hidden.join(", "):"no providers to show"):"all providers hidden in settings")+"</div>";
+ document.getElementById("usage").innerHTML=usageHtml(d.usage);
+}
 async function refresh(){
  try{
-  const d=last=await(await fetch("/api/status")).json();
-  document.getElementById("warn").innerHTML=d.insecure?'⚠ reachable on LAN without authentication — set OPENCODE_SERVER_PASSWORD (same as opencode web)':""; 
-  document.getElementById("rfrsh").style.display=(d.usage&&d.usage.enabled)?"":"none";
-  document.getElementById("clocks").textContent="local "+d.local.time+" ("+d.local.tz+") · UTC "+d.utc+" · lead-time alerts "+d.leadMinutes+" min · auto-refresh 30 s"+(d.hidden&&d.hidden.length?" · hidden (no API key): "+d.hidden.join(", "):"");
-  document.getElementById("grid").innerHTML=d.providers.length?d.providers.map(p=>{
-   const badge=p.state==="peak"?'<span class="badge peak">PEAK</span>':p.state==="offpeak"?'<span class="badge off">OFF-PEAK</span>':'<span class="badge none">NO FIXED WINDOW</span>';
-   const bar=p.pct==null?"":'<div class="bar"><i style="width:'+p.pct+'%;background:'+(p.state==="peak"?"var(--peakseg)":"var(--offink)")+'"></i></div><div class="meta"><span>window started '+esc(p.sinceLocal||"")+'</span><span>'+esc(p.untilLabel||"")+"</span></div>";
-   const day=localDayBar(p,Date.now());
-   return '<div class="card"><div class="top"><span class="name">'+esc(p.name)+"</span>"+badge+'</div><div class="win">'+esc(p.scopeLabel)+" · tz "+esc(p.tz)+"</div>"+(p.windows.length?'<div class="win">peak: '+p.windows.map(esc).join(" & ")+"</div>":"")+'<div class="b">'+esc(p.benefit)+"</div>"+(p.note?'<div class="note">'+esc(p.note)+"</div>":"")+day+bar+'<div class="src">source: <a href="'+esc(p.source)+'" target="_blank" rel="noreferrer">'+esc(p.source.split("/")[2])+"</a> · verified "+esc(p.checked)+"</div></div>";
-  }).join(""):'<div class="card">'+esc(d.hidden&&d.hidden.length?"All tracked providers are hidden — no API key configured for: "+d.hidden.join(", "):"no providers to show")+"</div>";
-  document.getElementById("usage").innerHTML=usageHtml(d.usage);
- }catch(e){document.getElementById("grid").innerHTML='<div class="card">status unavailable: '+esc(e.message)+"</div>"}
+  last=await(await fetch("/api/status")).json();
+  render(last);
+ }catch(e){last=null;document.getElementById("grid").innerHTML='<div class="card">status unavailable: '+esc(e.message)+"</div>"}
  finally{var pend=last&&last.usage&&last.usage.pending&&last.usage.sources&&!last.usage.sources.length;setTimeout(refresh,pend?2000:30000)}
 }
+function renderLast(){if(last)render(last)}
 document.getElementById("rfrsh").onclick=function(){try{fetch("/api/usage/refresh",{method:"POST"})}catch(e){};setTimeout(refresh,1500);setTimeout(refresh,4000)};
 refresh();
 function usageHtml(u){
  if(!u||!u.enabled)return "";
  var srcs=(u&&u.sources)||[];
  var head='<h1 style="font-size:15px;margin:26px 0 12px">Quota &amp; balance</h1>';
- if(!srcs.length){
-  var pend=(u.pending&&u.pendingSources&&u.pendingSources.length)?u.pendingSources:[];
+ var vis=srcs.filter(function(s){return SET.hideU.indexOf(s.id)<0});
+ if(!vis.length){
+  var pend=(u.pending&&u.pendingSources&&u.pendingSources.length)?u.pendingSources.filter(function(id){return SET.hideU.indexOf(id)<0}):[];
   if(pend.length)return head+'<div class="grid">'+pend.map(function(id){return '<div class="card"><div class="top"><span class="name">'+esc(id)+'</span></div><div class="bar loading"><i></i></div><div class="meta"><span>waiting for first poll…</span><span></span></div></div>'}).join("")+"</div>";
+  if(srcs.length)return head+'<div class="card">all quota sources hidden in settings</div>';
   return head+'<div class="card">no API keys found — run <code>opencode auth login &lt;provider&gt;</code> or set OPENCODE_QUOTAS_&lt;PROVIDER&gt;_API_KEY (see README)</div>';
  }
- var cards=srcs.map(function(s){
+ var cards=vis.map(function(s){
   var head='<div class="top"><span class="name">'+esc(s.name)+'</span>'+(s.plan?'<span class="badge none">'+esc(s.plan)+'</span>':"")+'</div>';
   var keyline=s.keyOrigin?'<div class="note">key: '+esc(s.keyOrigin)+(s.keyHint?" "+esc(s.keyHint):"")+"</div>":"";
   if(s.status!=="ok"&&(!s.windows||!s.windows.length))return '<div class="card">'+head+keyline+'<div class="err">'+esc(s.error||"unavailable")+'</div><div class="note">'+esc(s.fetchedAgo||"")+"</div></div>";
